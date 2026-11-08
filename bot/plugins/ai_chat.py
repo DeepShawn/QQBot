@@ -20,29 +20,58 @@ import urllib.request
 import files as files_mod
 import media
 import providers
+import pytool
 import search
 from dispatcher import PluginBase
 from utils import Cooldown, mentioned, strip_at, text_of, text_seg
 
 _MD_RE = re.compile(r"\*\*|__|`{1,3}|^#{1,6}\s*", re.M)
 
-# python_run 插件没被禁用时追加到 system prompt：避免 AI 说「没有工具/跑不了」
-LOCAL_PYTHON_HINT = (
-    "【本地 Python】机器人可以在手机运行环境里执行 Python：用户发 /py <代码>、"
-    "/run <文件名>，或引用 .py 文件/代码块说「运行」。你自己不能直接执行代码；"
-    "用户让你运行代码时，请让对方发「运行」或 /py，不要说“没有工具/跑不了”。"
+# 本地 Python 能力提示（追加到 system prompt）
+LOCAL_PYTHON_TOOL_HINT = (
+    "【本地 Python】你有一个 run_python 工具：用户让你运行代码、计算、执行本地脚本时，"
+    "自己调用它（code 传 Python 源码，file 传 data/files 下的 .py 文件名），"
+    "不要把「运行」推回给用户，也不要说自己没有工具。"
+)
+LOCAL_PYTHON_NO_TOOL_HINT = (
+    "【本地 Python】机器人在手机本机可以运行 Python，但你当前不能直接调用工具；"
+    "用户要运行代码时，可以请有权限的管理员发 /py <代码> 或 /run <文件名>，"
+    "不要说自己完全没有运行能力。"
 )
 
+PYTHON_TOOL_NAME = "run_python"
+PYTHON_TOOL_SPEC = {
+    "type": "function",
+    "function": {
+        "name": PYTHON_TOOL_NAME,
+        "description": (
+            "在手机本机运行 Python 代码或 data/files 下的 .py 文件并返回 stdout/stderr。"
+            "用户要求运行代码、计算、执行脚本时使用。code 和 file 二选一。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "要运行的完整 Python 源码"},
+                "file": {
+                    "type": "string",
+                    "description": "data/files 下已有的 .py 文件名，如 代码_0101_120000.py",
+                },
+            },
+        },
+    },
+}
+MAX_TOOL_ROUNDS = 3
 
-def local_python_hint(ctx) -> str:
-    """python_run 插件启用时返回本地 Python 能力提示，否则返回空串。"""
+
+def local_python_hint(ctx, tool_available: bool = False) -> str:
+    """python_run 启用时返回本地 Python 提示；工具可用/不可用两种文案。"""
     try:
         cfg = ctx.plugin_cfg("python_run") or {}
     except Exception:
         cfg = {}
     if cfg.get("enabled") is False:
         return ""
-    return LOCAL_PYTHON_HINT
+    return LOCAL_PYTHON_TOOL_HINT if tool_available else LOCAL_PYTHON_NO_TOOL_HINT
 
 
 class Plugin(PluginBase):
@@ -370,6 +399,154 @@ class Plugin(PluginBase):
             auth=auth,
         )
 
+    # ---------------- 本地 Python 工具（由 AI 自主决定是否调用） ----------------
+    def _python_run_cfg(self) -> dict:
+        try:
+            return self.ctx.plugin_cfg("python_run") or {}
+        except Exception:
+            return {}
+
+    def _python_tool_timeout(self) -> float:
+        try:
+            return float(
+                self._python_run_cfg().get("timeout_seconds", pytool.DEFAULT_TIMEOUT)
+            )
+        except (TypeError, ValueError):
+            return pytool.DEFAULT_TIMEOUT
+
+    async def _can_use_python_tool(self, event) -> bool:
+        """私聊直接可以；群里只允许 bot.admins 或群主/群管理员。"""
+        if event.get("message_type") != "group":
+            return True
+        user_id = event.get("user_id")
+        try:
+            if self.ctx.is_admin(user_id):
+                return True
+        except Exception:
+            pass
+        api = getattr(self.ctx, "api", None)
+        if api is None:
+            return False
+        try:
+            info = await api.call(
+                "get_group_member_info",
+                group_id=int(event.get("group_id") or 0),
+                user_id=int(user_id or 0),
+                no_cache=True,
+            )
+        except Exception as e:
+            self.ctx.log.info("ai_chat 查询群成员失败: %s", e)
+            return False
+        role = (
+            str((info or {}).get("role") or "").lower()
+            if isinstance(info, dict)
+            else ""
+        )
+        return role in ("owner", "admin")
+
+    async def _python_tools(self, event, cfg: dict) -> list | None:
+        """当前这次请求要不要给模型提供 run_python 工具。"""
+        py_cfg = self._python_run_cfg()
+        if py_cfg.get("enabled") is False or py_cfg.get("ai_tool") is False:
+            return None
+        if str(cfg.get("auth") or "").strip():  # 账号模式（Claude/ChatGPT 等）不提供
+            return None
+        if providers.normalize_provider(str(cfg.get("provider") or "openai")) != "openai":
+            return None
+        if not await self._can_use_python_tool(event):
+            return None
+        return [PYTHON_TOOL_SPEC]
+
+    def _sync_chat_with_tools(
+        self, cfg: dict, messages: list, tools: list | None
+    ) -> dict:
+        model = str(cfg.get("model") or "").strip() or "deepseek-chat"
+        return providers.chat_with_tools(
+            provider=str(cfg.get("provider") or "openai"),
+            base_url=str(cfg.get("base_url", "")),
+            api_key=str(cfg.get("api_key", "")),
+            model=model,
+            messages=messages,
+            tools=tools,
+            temperature=float(cfg.get("temperature", 0.7)),
+            max_tokens=int(cfg.get("max_tokens", 2000) or 2000),
+            timeout=float(cfg.get("timeout_seconds", 60)),
+        )
+
+    def _execute_python_tool(self, call: dict) -> str:
+        """执行一次 run_python 调用，返回给模型的 JSON 文本。"""
+        try:
+            arguments = json.loads(str(call.get("arguments") or "{}"))
+        except Exception:
+            return json.dumps({"error": "工具参数不是合法 JSON"}, ensure_ascii=False)
+        if not isinstance(arguments, dict):
+            return json.dumps({"error": "工具参数格式不对"}, ensure_ascii=False)
+        code = arguments.get("code")
+        file = arguments.get("file")
+        if not isinstance(code, str) or not code.strip():
+            code = None
+        if not isinstance(file, str) or not file.strip():
+            file = None
+        if code is None and file is None:
+            return json.dumps({"error": "需要 code 或 file 参数"}, ensure_ascii=False)
+        try:
+            result = pytool.execute_python(
+                code=code,
+                file=file,
+                timeout=self._python_tool_timeout(),
+                data_dir=self.ctx.data_dir,
+            )
+        except Exception as e:
+            self.ctx.log.warning("run_python 工具执行异常: %s", e)
+            result = {"error": "运行 Python 失败，稍后再试。"}
+        return json.dumps(result, ensure_ascii=False)
+
+    async def _tool_chat(self, cfg: dict, messages: list, tools: list) -> str:
+        """最多 3 轮工具循环：tool_calls -> 执行 -> role=tool 结果回给模型。"""
+        working = [dict(item) for item in messages]
+        last_content = ""
+        for round_index in range(MAX_TOOL_ROUNDS):
+            result = await asyncio.to_thread(
+                self._sync_chat_with_tools, cfg, working, tools
+            )
+            content = str(result.get("content") or "").strip()
+            calls = [c for c in (result.get("tool_calls") or []) if isinstance(c, dict)]
+            if content:
+                last_content = content
+            if not calls:
+                return content
+            assistant_calls = []
+            for index, call in enumerate(calls):
+                call_id = str(call.get("id") or f"call_{round_index}_{index}")
+                assistant_calls.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": str(call.get("name") or PYTHON_TOOL_NAME),
+                            "arguments": str(call.get("arguments") or "{}"),
+                        },
+                    }
+                )
+            working.append(
+                {
+                    "role": "assistant",
+                    "content": content or None,
+                    "tool_calls": assistant_calls,
+                }
+            )
+            for index, call in enumerate(calls):
+                call_id = assistant_calls[index]["id"]
+                output = await asyncio.to_thread(self._execute_python_tool, call)
+                working.append(
+                    {"role": "tool", "tool_call_id": call_id, "content": output}
+                )
+        # 3 轮之后还没收尾：不再提供工具，让模型直接回答
+        final = await asyncio.to_thread(
+            self._sync_chat_with_tools, cfg, working, None
+        )
+        return str(final.get("content") or "").strip() or last_content
+
     @staticmethod
     def _wants_file(prompt: str, blocks: list, cfg: dict) -> bool:
         fcfg = cfg.get("files") or {}
@@ -510,8 +687,10 @@ class Plugin(PluginBase):
                 return True
             return False
 
+        tools = await self._python_tools(event, cfg)
+
         system = self.ctx.format_text(cfg.get("system_prompt", ""), event, group_id=group_id)
-        hint = local_python_hint(self.ctx)
+        hint = local_python_hint(self.ctx, bool(tools))
         if hint:
             system = (str(system).rstrip() + "\n\n" + hint).strip()
         messages = [{"role": "system", "content": system}]
@@ -544,7 +723,16 @@ class Plugin(PluginBase):
         messages.append({"role": "user", "content": prompt})
 
         try:
-            answer = await asyncio.to_thread(self._sync_chat, cfg, messages)
+            if tools:
+                try:
+                    answer = await self._tool_chat(cfg, messages, tools)
+                except providers.ProviderError as e:
+                    # 有的 OpenAI 兼容中转/本地模型不接受 tools 参数：退回普通聊天，
+                    # 不因此让原本能用的对话失败
+                    self.ctx.log.warning("run_python 工具调用失败，退回普通聊天: %s", e)
+                    answer = await asyncio.to_thread(self._sync_chat, cfg, messages)
+            else:
+                answer = await asyncio.to_thread(self._sync_chat, cfg, messages)
         except providers.ProviderError as e:
             self.ctx.log.error("AI 接口报错: %s", e)
             await self.ctx.reply(event, f"AI 接口报错：{e}")

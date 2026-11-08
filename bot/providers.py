@@ -9,6 +9,8 @@
     normalize_provider(name) -> str
     chat(*, provider, base_url, api_key, model, messages,
          temperature=0.7, max_tokens=600, timeout=60.0, auth="") -> str
+    chat_with_tools(*, provider, base_url, api_key, model, messages, tools,
+                    temperature=0.7, max_tokens=2000, timeout=60.0) -> dict
     describe_images(*, provider, base_url, api_key, model, images,
                     prompt="...", timeout=60.0, max_tokens=700) -> str
 
@@ -27,7 +29,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-__all__ = ["ProviderError", "normalize_provider", "chat", "describe_images"]
+__all__ = [
+    "ProviderError",
+    "normalize_provider",
+    "chat",
+    "chat_with_tools",
+    "describe_images",
+]
 
 # ---------------------------------------------------------------- 常量
 
@@ -474,6 +482,140 @@ def chat(
         api_key=key,
     )
     return _gemini_text(data)
+
+
+# ---------------------------------------------------------------- 工具调用（OpenAI 兼容）
+
+PYTHON_TOOL_MESSAGE_ROLES = ("system", "user", "assistant", "tool")
+
+
+def _normalize_tool_messages(messages: list) -> list[dict]:
+    """工具循环用的消息校验：在普通 role 之外允许 assistant.tool_calls 和 tool 结果。"""
+    if not isinstance(messages, (list, tuple)):
+        raise ProviderError("messages 必须是列表")
+    cleaned: list[dict] = []
+    for item in messages:
+        if not isinstance(item, dict):
+            raise ProviderError("messages 里的每条消息必须是 dict")
+        role = item.get("role")
+        if role not in PYTHON_TOOL_MESSAGE_ROLES:
+            raise ProviderError(f"不支持的消息 role: {role}")
+        content = item.get("content")
+        if content is not None and not isinstance(content, str):
+            raise ProviderError("消息 content 必须是字符串或 null")
+        message: dict = {"role": role, "content": content}
+        if role == "assistant":
+            raw_calls = item.get("tool_calls")
+            if isinstance(raw_calls, list) and raw_calls:
+                calls = []
+                for call in raw_calls:
+                    if not isinstance(call, dict):
+                        continue
+                    function = call.get("function") if isinstance(call.get("function"), dict) else {}
+                    calls.append(
+                        {
+                            "id": str(call.get("id") or ""),
+                            "type": "function",
+                            "function": {
+                                "name": str(function.get("name") or ""),
+                                "arguments": str(function.get("arguments") or "{}"),
+                            },
+                        }
+                    )
+                if calls:
+                    message["tool_calls"] = calls
+        elif role == "tool":
+            message["tool_call_id"] = str(item.get("tool_call_id") or "")
+        cleaned.append(message)
+    if not cleaned:
+        raise ProviderError("messages 不能为空")
+    return cleaned
+
+
+def _parse_tool_completion(data: dict) -> dict:
+    """解析 choices[0].message -> {content, tool_calls:[{id,name,arguments}]}。"""
+    try:
+        message = data["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise ProviderError(
+            "OpenAI 兼容接口返回格式异常: 缺少 choices[0].message"
+        ) from e
+    if not isinstance(message, dict):
+        raise ProviderError("OpenAI 兼容接口返回格式异常: message 不是对象")
+    content = message.get("content")
+    if isinstance(content, list):  # 少数中转会分段返回
+        content = "".join(
+            str(part.get("text") or "")
+            for part in content
+            if isinstance(part, dict)
+        )
+    calls: list[dict] = []
+    raw_calls = message.get("tool_calls")
+    if isinstance(raw_calls, list):
+        for call in raw_calls:
+            if not isinstance(call, dict):
+                continue
+            function = call.get("function") if isinstance(call.get("function"), dict) else {}
+            calls.append(
+                {
+                    "id": str(call.get("id") or ""),
+                    "name": str(function.get("name") or ""),
+                    "arguments": str(function.get("arguments") or ""),
+                }
+            )
+    return {"content": str(content or ""), "tool_calls": calls}
+
+
+def chat_with_tools(
+    *,
+    provider: str,
+    base_url: str,
+    api_key: str,
+    model: str,
+    messages: list,
+    tools: list | None = None,
+    temperature: float = 0.7,
+    max_tokens: int = 2000,
+    timeout: float = 60.0,
+) -> dict:
+    """OpenAI 兼容接口的「一轮」工具调用：发 tools、解析 content/tool_calls。
+
+    不做循环（工具循环在 ai_chat）；tools 为空时就是普通对话，只是解析结果统一。
+    只支持 OpenAI 兼容接口（provider 归一化后必须是 openai）；其它接口直接报错。
+    返回 {"content": str, "tool_calls": [{"id","name","arguments"}]}；失败抛 ProviderError。
+    """
+    name = _check_provider(provider)
+    if name != "openai":
+        raise ProviderError("这个接口不支持工具调用")
+    msgs = _normalize_tool_messages(messages)
+    model_name = _require_model(model)
+    key = _clean_api_key(api_key)
+    base = _resolve_base_url(name, base_url)
+    temp = _as_float(temperature, "temperature")
+    max_out = _as_int(max_tokens, "max_tokens")
+    timeout_s = _timeout_value(timeout)
+
+    payload = {
+        "model": model_name,
+        "messages": msgs,
+        "temperature": temp,
+        "max_tokens": max_out,
+        "stream": False,
+    }
+    if tools:
+        if not isinstance(tools, (list, tuple)):
+            raise ProviderError("tools 必须是列表")
+        payload["tools"] = list(tools)
+        payload["tool_choice"] = "auto"
+    data = _post_json(
+        _openai_url(base),
+        payload,
+        _openai_headers(key),
+        timeout=timeout_s,
+        label="OpenAI 兼容",
+        api_key=key,
+    )
+    return _parse_tool_completion(data)
 
 
 def describe_images(

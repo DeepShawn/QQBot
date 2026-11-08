@@ -1,38 +1,26 @@
-"""在 QQ 聊天里真的运行 Python。
+"""在 QQ 聊天里运行 Python 的显式命令插件（/py、/run）。
 
-用法（私聊直接可用；群里要先 @ 机器人，且只有 bot.admins / 群主 / 群管理员能用）：
-- ``/py <代码>``：运行这段 Python（可多行），也可以 ``/py`` + 引用一条含
-  ```python 代码块的消息。
-- ``/run <文件名>``：运行 bot 保存过的 .py（data/files/ 下，精确或包含匹配；
-  也允许带路径，但真实路径必须在 data/files 内）。
-- ``/run`` + 引用一条带 .py 文件的消息：下载后运行；引用含 ```python 代码块
-  的消息也可以。
-- 自然语言：消息里有「运行/执行/跑/run」，并且引用了 .py 文件 / python 代码块，
-  或提到 data/files 下存在的 .py 文件名，就直接执行；只提到 python/代码 时回复
-  用法提示（不再交给 AI 瞎答）。
-- 追问式触发：「再试试 / 试试 / 试一下 / 跑一下 / 运行一下」这类消息在没有明确
-  目标时，自动运行 data/files 里最近 30 分钟内改过的 .py，并先回一句文件名。
-- 引用消息的纯文本里出现 xxx.py 文件名（比如机器人之前发的「已保存成文件：代码_x.py」）
-  也会解析出来并运行；群聊里这种引用不需要 @ 机器人。
+命令（群里要先 @ 机器人；只有 bot.admins / 群主 / 群管理员能用，私聊直接可用）：
+- ``/py <代码>``：运行这段 Python（可多行）；``/py`` 无代码时可用引用的
+  ```python 代码块或 .py 文件。
+- ``/run <文件名>``：运行 data/files 下已有的 .py（精确/前缀/包含匹配；带路径时
+  真实路径必须在 data/files 内）。
+- ``/run`` 无参数 + 引用 .py 文件：下载后运行；引用 ```python 代码块也可以；
+  引用消息的纯文本里出现 xxx.py 文件名也会解析出来运行。
 
-执行方式：``sys.executable -I -u`` 跑临时脚本，30 秒超时，输出截断；只使用标准库。
-安全：只运行用户明确给出/引用的 Python 代码，不拼接 shell；临时脚本结束即删；
-路径做 data/files 越界校验；群里执行前查群成员 role（owner/admin）或 bot.admins。
+用户要求「不要用关键词触发工具」：本插件不再根据自然语言（运行/执行/跑/再试试）
+自动执行；需要 AI 自主决定时，由 ai_chat 的 run_python 工具循环调用 pytool。
+执行实现集中在 bot/pytool.py（-I -u -X utf8、30s 超时、输出截断、路径越界校验）。
 """
 from __future__ import annotations
 
 import asyncio
-import os
 import re
-import signal
-import subprocess
-import sys
-import time
-import uuid
 from pathlib import Path
 
 import files as files_mod
 import media
+import pytool
 from dispatcher import PluginBase
 from utils import mentioned, segments, strip_at, text_of
 
@@ -41,34 +29,25 @@ USAGE_TEXT = (
     "🐍 Python 用法：\n"
     "· /py <代码> 直接运行，例如 /py print(\"你好\")\n"
     "· /run 文件名.py 运行 bot 保存过的脚本（data/files/ 下）\n"
-    "· 引用带 .py 文件或 ```python 代码块的消息，再发「运行」\n"
+    "· 引用带 .py 文件或 ```python 代码块的消息，再发 /run 或 /py\n"
     "群里只有机器人管理员和群主/群管理员能用。"
 )
 PERMISSION_TEXT = "运行 Python 只有管理员能用"
 
-DEFAULT_TIMEOUT = 30.0
-MIN_TIMEOUT = 0.2
-MAX_TIMEOUT = 120.0
+DEFAULT_TIMEOUT = pytool.DEFAULT_TIMEOUT
+MIN_TIMEOUT = pytool.MIN_TIMEOUT
+MAX_TIMEOUT = pytool.MAX_TIMEOUT
 MAX_DOWNLOAD_BYTES = 200 * 1024
-MAX_CODE_BYTES = 200 * 1024
-MAX_OUTPUT_CHARS = 2000
+MAX_OUTPUT_CHARS = pytool.MAX_OUTPUT_CHARS
 MAX_REPLY_CHARS = 3000
 DOWNLOAD_TIMEOUT = 20.0
-KILL_WAIT_SECONDS = 5.0
 FILES_DIR_NAME = "files"
-RUN_DIR_NAME = "run"
 
 _PY_LANGS = ("python", "python3", "py", "py3")
 _CMD_PY_RE = re.compile(r"^/(?:py|python)\b\s*(.*)$", re.I | re.S)
 _CMD_RUN_RE = re.compile(r"^/run\b\s*(.*)$", re.I | re.S)
-_NL_RUN_RE = re.compile(r"运行|执行|跑|(?<![A-Za-z])run(?![A-Za-z])", re.I)
-_TRY_RE = re.compile(
-    r"再试|试试|试一下|试下|试一次|跑一下|跑下|运行一下|执行一下", re.I
-)
-_PY_WORD_RE = re.compile(r"python|(?<![A-Za-z])py(?![A-Za-z])|\.py|代码", re.I)
-# 文本里 xxx.py 文件名的粗略抓取（再和 data/files 里的真实文件名对照）
+# 引用文本里 xxx.py 文件名的粗略抓取（再和 data/files 里的真实文件名对照）
 _PY_NAME_RE = re.compile(r"[\w./\\-]+\.py", re.UNICODE)
-RECENT_WINDOW_SECONDS = 30 * 60
 
 
 # ---------------------------------------------------------------- 小工具
@@ -123,6 +102,21 @@ def _safe_download_name(name: str) -> str:
     return base
 
 
+def _is_within(path: Path, base: Path) -> bool:
+    try:
+        path = Path(path).resolve()
+        base = Path(base).resolve()
+    except OSError:
+        return False
+    if path == base:
+        return True
+    try:
+        path.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
 class Plugin(PluginBase):
     name = "python_run"
     priority = 15  # commands(10) 之后，group_admin(50) / keyword(200) / ai_chat(300) 之前
@@ -131,7 +125,6 @@ class Plugin(PluginBase):
         super().__init__(ctx)
         self.data_dir = Path(ctx.data_dir)
         self.files_dir = self.data_dir / FILES_DIR_NAME
-        self.run_dir = self.data_dir / RUN_DIR_NAME
         try:
             self.ctx.log.info("python_run 已加载（/py、/run）")
         except Exception:
@@ -212,6 +205,29 @@ class Plugin(PluginBase):
             return ("code", code)
         return None
 
+    def _quoted_filename(self, quoted) -> Path | None:
+        """引用消息的纯文本里出现 xxx.py 文件名 -> data/files 里解析出路径。"""
+        text = self._quoted_text(quoted)
+        if not text:
+            return None
+        # 1) 先和 data/files 里的真实文件名对照（机器人自己发的保存提示最常见）
+        best: Path | None = None
+        for path in self._iter_py_files():
+            if path.name and path.name in text:
+                if best is None or len(path.name) > len(best.name):
+                    best = path
+        if best is not None:
+            return best
+        # 2) 再从文本里抓 xxx.py 片段，交给 /run 的查找逻辑
+        for match in _PY_NAME_RE.finditer(text):
+            raw = match.group(0).strip("./\\").strip()
+            if not raw:
+                continue
+            path, _error = self._resolve_run_arg(raw)
+            if path is not None:
+                return path
+        return None
+
     @staticmethod
     def _parse_command(text: str) -> tuple[str, str]:
         """返回 (command, arg)；不是命令返回 ("", "")。"""
@@ -283,54 +299,6 @@ class Plugin(PluginBase):
             return contained[0], ""
         return None, f"没找到 {raw} 这个 .py 文件。可以发文件后 /run 文件名，或直接 /py 贴代码。"
 
-    def _recent_py_file(self) -> Path | None:
-        """data/files 下最近 30 分钟内修改过的 .py（取最新一个）。"""
-        now = time.time()
-        best: tuple[float, Path] | None = None
-        for path in self._iter_py_files():
-            try:
-                mtime = path.stat().st_mtime
-            except OSError:
-                continue
-            if now - mtime > RECENT_WINDOW_SECONDS:
-                continue
-            if best is None or mtime > best[0]:
-                best = (mtime, path)
-        return best[1] if best is not None else None
-
-    def _quoted_filename(self, quoted) -> Path | None:
-        """引用消息的纯文本里出现 xxx.py 文件名 -> data/files 里解析出路径。"""
-        text = self._quoted_text(quoted)
-        if not text:
-            return None
-        # 1) 先和 data/files 里的真实文件名对照（机器人自己发的保存提示最常见）
-        best: Path | None = None
-        for path in self._iter_py_files():
-            if path.name and path.name in text:
-                if best is None or len(path.name) > len(best.name):
-                    best = path
-        if best is not None:
-            return best
-        # 2) 再从文本里抓 xxx.py 片段，交给 /run 的查找逻辑
-        for match in _PY_NAME_RE.finditer(text):
-            raw = match.group(0).strip("./\\").strip()
-            if not raw:
-                continue
-            path, _error = self._resolve_run_arg(raw)
-            if path is not None:
-                return path
-        return None
-
-    def _find_file_in_text(self, text: str) -> Path | None:
-        """自然语言里提到 data/files 下已有的 .py 文件名 -> 路径。"""
-        best: tuple[int, Path] | None = None
-        for path in self._iter_py_files():
-            if path.name and path.name in text:
-                size = len(path.name)
-                if best is None or size > best[0]:
-                    best = (size, path)
-        return best[1] if best else None
-
     # ---------------- 权限 ----------------
     async def _allowed(self, event) -> bool:
         if event.get("message_type") != "group":
@@ -356,90 +324,6 @@ class Plugin(PluginBase):
             return False
         role = str((info or {}).get("role") or "").lower() if isinstance(info, dict) else ""
         return role in ("owner", "admin")
-
-    # ---------------- 执行 ----------------
-    def _execute(self, code: str) -> dict:
-        """同步执行代码（放 asyncio.to_thread 里跑），返回结果 dict。"""
-        started = time.monotonic()
-        script = None
-        try:
-            self.run_dir.mkdir(parents=True, exist_ok=True)
-            script = self.run_dir / f"run_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}.py"
-            script.write_text(code, encoding="utf-8")
-        except OSError as e:
-            self.ctx.log.warning("python_run 写临时脚本失败: %s", e)
-            return {"error": "运行失败：写临时脚本失败，检查 data 目录权限。"}
-        env = dict(os.environ)
-        env["PYTHONIOENCODING"] = "UTF-8"
-        env["PYTHONUTF8"] = "1"
-        env.pop("PYTHONSTARTUP", None)
-        timeout = self._timeout()
-        try:
-            proc = subprocess.Popen(
-                # -I: 隔离模式（忽略 PYTHON* 环境变量/用户 site）；-u: 不缓冲；
-                # -X utf8: -I 会忽略 PYTHONIOENCODING，用它兜底中文输出
-                [sys.executable, "-I", "-u", "-X", "utf8", str(script)],
-                cwd=str(self.run_dir),
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=env,
-                start_new_session=True,
-            )
-        except OSError as e:
-            self.ctx.log.warning("python_run 启动 Python 失败: %s", e)
-            self._cleanup_script(script)
-            return {"error": "运行失败：启动 Python 失败。"}
-        timed_out = False
-        try:
-            out, err = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            self._kill_group(proc)
-            try:
-                out, err = proc.communicate(timeout=KILL_WAIT_SECONDS)
-            except Exception:
-                out, err = b"", b""
-        except Exception as e:
-            self.ctx.log.warning("python_run 执行异常: %s", e)
-            self._kill_group(proc)
-            self._cleanup_script(script)
-            return {"error": "运行失败：执行过程中出错了。"}
-        finally:
-            self._cleanup_script(script)
-        return {
-            "stdout": self._decode(out),
-            "stderr": self._decode(err),
-            "exit_code": int(proc.returncode if proc.returncode is not None else -1),
-            "timed_out": timed_out,
-            "duration": time.monotonic() - started,
-        }
-
-    @staticmethod
-    def _decode(raw) -> str:
-        try:
-            return bytes(raw or b"").decode("utf-8", "replace")
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _cleanup_script(script) -> None:
-        if script is None:
-            return
-        try:
-            Path(script).unlink(missing_ok=True)
-        except OSError:
-            pass
-
-    @staticmethod
-    def _kill_group(proc) -> None:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                proc.kill()
-            except Exception:
-                pass
 
     # ---------------- 结果回复 ----------------
     def _format_result(self, result: dict) -> str:
@@ -471,39 +355,18 @@ class Plugin(PluginBase):
     async def _reply_result(self, event, result: dict):
         await self._reply(event, self._format_result(result))
 
-    # ---------------- 各种执行入口 ----------------
+    # ---------------- 执行入口（统一走 pytool） ----------------
     async def _run_code(self, event, code: str) -> None:
-        if len(code.encode("utf-8", "replace")) > MAX_CODE_BYTES:
-            await self._reply(event, f"{RESULT_TITLE}\n代码太长了（超过 200KB）。")
-            return
-        result = await asyncio.to_thread(self._execute, code)
+        result = await asyncio.to_thread(
+            pytool.execute_python, code, None, self._timeout(), self.data_dir
+        )
         await self._reply_result(event, result)
 
     async def _run_file(self, event, path: Path) -> None:
-        try:
-            path = Path(path).resolve()
-        except OSError:
-            await self._reply(event, f"{RESULT_TITLE}\n这个路径打不开，换一个再试。")
-            return
-        # 二次兜底：模糊匹配/符号链接也可能指到 data/files 外面
-        if not _is_within(path, self.files_dir):
-            await self._reply(event, f"{RESULT_TITLE}\n只能运行 data/files 里的 .py 文件。")
-            return
-        try:
-            raw = path.read_bytes()
-        except OSError as e:
-            self.ctx.log.warning("python_run 读取文件失败: %s", e)
-            await self._reply(event, f"{RESULT_TITLE}\n读取这个 .py 文件失败。")
-            return
-        if len(raw) > MAX_CODE_BYTES:
-            await self._reply(event, f"{RESULT_TITLE}\n这个 .py 文件太大了（超过 200KB）。")
-            return
-        try:
-            code = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            await self._reply(event, f"{RESULT_TITLE}\n这个 .py 文件不是 UTF-8 文本，先转成 UTF-8 再试。")
-            return
-        await self._run_code(event, code)
+        result = await asyncio.to_thread(
+            pytool.execute_python, None, path, self._timeout(), self.data_dir
+        )
+        await self._reply_result(event, result)
 
     async def _run_file_segment(self, event, data: dict, name: str) -> None:
         data = data if isinstance(data, dict) else {}
@@ -557,11 +420,6 @@ class Plugin(PluginBase):
         if not await self._allowed(event):
             await self._reply(event, PERMISSION_TEXT)
             return
-        if kind == "recent":
-            path = action[1]
-            await self._reply(event, f"运行最近的代码文件：{Path(path).name}")
-            await self._run_file(event, path)
-            return
         if kind == "code":
             await self._run_code(event, str(action[1]))
         elif kind == "file":
@@ -569,45 +427,44 @@ class Plugin(PluginBase):
         elif kind == "file_seg":
             await self._run_file_segment(event, action[1], action[2])
 
-    # ---------------- 主入口 ----------------
+    # ---------------- 主入口（只认显式命令） ----------------
     async def on_event(self, event) -> bool:
         if event.get("post_type") != "message":
             return False
-        cfg = self._cfg()
-        if cfg.get("enabled") is False:
+        if self._cfg().get("enabled") is False:
             return False
         message_type = event.get("message_type")
         if message_type not in ("group", "private"):
             return False
         is_group = message_type == "group"
         self_id = getattr(self.ctx, "self_id", 0)
-        addressed = (not is_group) or bool(self_id and mentioned(event.get("message"), self_id))
-        has_reply = self._has_reply(event)
+        addressed = (not is_group) or bool(
+            self_id and mentioned(event.get("message"), self_id)
+        )
         text = (
             text_of(strip_at(event.get("message"), self_id)).strip()
             if self_id
             else text_of(event.get("message"))
         )
         command, arg = self._parse_command(text)
-
-        # 群里：明确的 /py、/run 命令可以直接用（执行前仍查权限）；自然语言必须 @ 机器人，
-        # 或者引用了一条带 python 代码/文件的消息（回复「运行」的工作流）。
-        if is_group and not addressed and not has_reply and not command:
+        if not command:
             return False
-        quoted = await self._quoted(event) if has_reply else None
+
+        quoted = await self._quoted(event) if self._has_reply(event) else None
         quoted_action = self._quoted_action(quoted)
         quoted_path = (
             self._quoted_filename(quoted)
             if quoted is not None and quoted_action is None
             else None
         )
-        # 群聊：引用消息里能解析到 .py 文件名（或代码/文件）也算可处理，不强制 @
+        # 群里：显式命令可以直接用（仍查权限）；只有「没 @ 且引用的东西里也解析不到 Python」
+        # 这种情况才交回给其它插件/普通聊天处理
         if (
             is_group
             and not addressed
+            and quoted is not None
             and quoted_action is None
             and quoted_path is None
-            and not command
         ):
             return False
 
@@ -644,30 +501,6 @@ class Plugin(PluginBase):
                 return True
             await self._reply(event, USAGE_TEXT)
             return True
-
-        # 自然语言：「运行/执行/跑/run」或「再试试/跑一下」这类追问
-        if not (_NL_RUN_RE.search(text) or _TRY_RE.search(text)):
-            return False
-        if quoted_action is not None:
-            await self._handle_action(event, quoted_action)
-            return True
-        if quoted_path is not None:
-            await self._handle_action(event, ("file", quoted_path))
-            return True
-        path = self._find_file_in_text(text)
-        if path is not None:
-            await self._handle_action(event, ("file", path))
-            return True
-        # 没有明确目标时，「再试试/跑一下」自动跑最近 30 分钟内的 .py
-        if _TRY_RE.search(text):
-            recent = self._recent_py_file()
-            if recent is not None:
-                await self._handle_action(event, ("recent", recent))
-                return True
-        # 只提到 python/py/代码：给用法提示，不再让 AI 瞎答
-        if _PY_WORD_RE.search(text):
-            await self._reply(event, USAGE_TEXT)
-            return True
         return False
 
     @staticmethod
@@ -679,19 +512,3 @@ class Plugin(PluginBase):
         if blocks:
             return str(blocks[0].get("code") or "").strip("\n")
         return text
-
-
-def _is_within(path: Path, base: Path) -> bool:
-    """path 是否在 base 内（含等于）；用 resolved 路径判断，防 ../ 越界。"""
-    try:
-        path = Path(path).resolve()
-        base = Path(base).resolve()
-    except OSError:
-        return False
-    if path == base:
-        return True
-    try:
-        path.relative_to(base)
-        return True
-    except ValueError:
-        return False

@@ -53,6 +53,18 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var logs by remember { mutableStateOf<String?>(null) }
     var confirmReinstall by remember { mutableStateOf(false) }
     var showPython by remember { mutableStateOf(false) }
+    var showKeywords by remember { mutableStateOf(false) }
+    var showPlugins by remember { mutableStateOf(false) }
+
+    // 全屏管理页：提前返回，页面自己带「返回更多」
+    if (showKeywords) {
+        KeywordManagerPage(padding, scrollBehavior) { showKeywords = false }
+        return
+    }
+    if (showPlugins) {
+        PluginManagerPage(padding, scrollBehavior) { showPlugins = false }
+        return
+    }
 
     // ---------- 后台运行 ----------
     var keepAlive by remember { mutableStateOf(ProotService.keepAliveEnabled(ctx)) }
@@ -291,6 +303,16 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
         }
 
         group("工具") {
+            ArrowPreference(
+                title = "关键词管理",
+                summary = "关键词回复规则增删改、联网搜索 / 画图触发词",
+                onClick = { showKeywords = true },
+            )
+            ArrowPreference(
+                title = "插件管理",
+                summary = "开关各插件，配置 Python 工具（是否让 AI 自己运行 / 超时）",
+                onClick = { showPlugins = true },
+            )
             ArrowPreference(
                 title = "运行 Python 代码",
                 summary = "在机器人运行环境里跑一段临时脚本，看输出 / 错误",
