@@ -3,6 +3,12 @@ package com.qqbot.console.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.lazy.LazyColumn
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -38,7 +44,10 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val scope = rememberCoroutineScope()
     var logs by remember { mutableStateOf<String?>(null) }
     var sessions by remember { mutableStateOf<List<JSONObject>?>(null) }
+    var showSessions by remember { mutableStateOf(false) }
+    var detailSession by remember { mutableStateOf<JSONObject?>(null) }
     var confirmReinstall by remember { mutableStateOf(false) }
+    var confirmClearContext by remember { mutableStateOf(false) }
 
     val kw = Store.cfg("plugins", "keyword") ?: JSONObject()
     val rules = kw.optJSONArray("rules")?.objects().orEmpty()
@@ -81,25 +90,23 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
         group("对话记忆") {
             ArrowPreference(
                 title = "查看最近的对话",
-                summary = sessions?.let { "${it.size} 个会话" },
+                summary = when {
+                    sessions == null -> "点开查看每个会话的完整内容"
+                    sessions!!.isEmpty() -> "暂无对话"
+                    else -> "${sessions!!.size} 个会话，点开看全文"
+                },
                 onClick = {
                     scope.launch {
                         sessions = Api.get("/api/context")?.optJSONArray("sessions")?.objects().orEmpty()
+                        if (sessions!!.isEmpty()) Store.toast = "还没有对话记录" else showSessions = true
                     }
                 },
             )
-            sessions?.take(8)?.forEach { s ->
-                val msgs = s.optJSONArray("messages")?.objects().orEmpty()
-                val last = msgs.lastOrNull()?.optStr("content").orEmpty().replace("\n", " ")
-                val key = s.optStr("key")
-                val title = when {
-                    key.startsWith("group") -> "群 " + key.removePrefix("group").substringBefore(":") + " · " + key.substringAfter(":")
-                    key.startsWith("private") -> "私聊 " + key.substringAfter(":")
-                    else -> key
-                }
-                InfoRow(title, "${msgs.size} 条")
-                if (last.isNotBlank()) Hint(last.take(60))
-            }
+            ArrowPreference(
+                title = "清空所有对话记忆",
+                summary = "清空后它会忘记之前的聊天",
+                onClick = { confirmClearContext = true },
+            )
         }
 
         group("日志") {
@@ -162,4 +169,99 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             Installer.reinstall()
         },
     )
+
+    ConfirmDialog(
+        show = confirmClearContext,
+        title = "清空所有对话记忆？",
+        summary = "它会忘掉所有群和私聊里聊过的内容，不可恢复。",
+        okText = "清空",
+        onDismiss = { confirmClearContext = false },
+        onOk = {
+            scope.launch {
+                Api.post("/api/context/clear")
+                sessions = emptyList()
+                Store.toast = "已清空对话记忆"
+            }
+        },
+    )
+
+    // 会话列表
+    SessionListDialog(
+        show = showSessions && detailSession == null,
+        sessions = sessions.orEmpty(),
+        onDismiss = { showSessions = false },
+        onPick = { detailSession = it },
+    )
+
+    // 单个会话的完整内容
+    SessionDetailDialog(
+        session = detailSession,
+        onDismiss = { detailSession = null },
+    )
+}
+
+/** 会话标题：群 1048589141 · 2153654562 / 私聊 2153654562 */
+private fun sessionTitle(key: String): String = when {
+    key.startsWith("group") -> {
+        val rest = key.removePrefix("group")
+        "群 " + rest.substringBefore(":") + " · " + rest.substringAfter(":", "?")
+    }
+    key.startsWith("private") -> "私聊 " + key.substringAfter(":")
+    else -> key
+}
+
+private fun fmtTime(sec: Double): String {
+    if (sec <= 0) return ""
+    return java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.CHINA)
+        .format(java.util.Date((sec * 1000).toLong()))
+}
+
+@Composable
+private fun SessionListDialog(
+    show: Boolean,
+    sessions: List<JSONObject>,
+    onDismiss: () -> Unit,
+    onPick: (JSONObject) -> Unit,
+) {
+    OverlayDialog(show = show, title = "对话记忆", onDismissRequest = onDismiss) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp)) {
+            items(sessions.size) { i ->
+                val s = sessions[i]
+                val msgs = s.optJSONArray("messages")?.objects().orEmpty()
+                BasicComponent(
+                    title = sessionTitle(s.optStr("key")),
+                    summary = "${msgs.size} 条 · " + fmtTime(s.optDouble("updated_at", 0.0)),
+                    onClick = { onPick(s) },
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        DialogButtons(onCancel = onDismiss, onOk = onDismiss, okText = "关闭")
+    }
+}
+
+@Composable
+private fun SessionDetailDialog(session: JSONObject?, onDismiss: () -> Unit) {
+    if (session == null) return
+    val msgs = session.optJSONArray("messages")?.objects().orEmpty()
+    val botName = Store.str("config", "bot", "name").ifBlank { "机器人" }
+    OverlayDialog(show = true, title = sessionTitle(session.optStr("key")), onDismissRequest = onDismiss) {
+        LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+            items(msgs.size) { i ->
+                val m = msgs[i]
+                val isUser = m.optStr("role") == "user"
+                Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                    Text(
+                        if (isUser) "对方" else botName,
+                        fontSize = 12.sp,
+                        color = if (isUser) MiuixTheme.colorScheme.onSurfaceVariantSummary else MiuixTheme.colorScheme.primary,
+                    )
+                    Text(m.optStr("content"), fontSize = 14.sp)
+                }
+            }
+            if (msgs.isEmpty()) item { Text("这个会话没有内容", fontSize = 14.sp) }
+        }
+        Spacer(Modifier.height(12.dp))
+        DialogButtons(onCancel = onDismiss, onOk = onDismiss, okText = "关闭")
+    }
 }
