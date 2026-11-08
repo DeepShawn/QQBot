@@ -187,7 +187,7 @@ def _device_poll_once(device_id: str, user_code: str):
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "qqbot-account/1.0",
+            "User-Agent": account_core.BROWSER_USER_AGENT,
         },
         method="POST",
     )
@@ -488,7 +488,7 @@ def chat(
         "originator": ORIGINATOR,
         "accept": "text/event-stream",
         "content-type": "application/json",
-        "User-Agent": "qqbot-account/1.0",
+        "User-Agent": account_core.BROWSER_USER_AGENT,
     }
     error_map = {
         401: ("expired", None),

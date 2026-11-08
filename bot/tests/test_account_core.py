@@ -26,6 +26,36 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
+class _FakeHTTPResponse:
+    """够 http_json / post_sse 用的假 HTTP 响应（上下文管理器 + 按行迭代）。"""
+
+    def __init__(self, body: bytes = b"{}", lines=()):
+        self._body = body
+        self._lines = list(lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self._body
+
+    def close(self):
+        pass
+
+    def __iter__(self):
+        return iter(self._lines)
+
+
+def _request_user_agent(request) -> str:
+    for key, value in request.header_items():
+        if key.lower() == "user-agent":
+            return str(value)
+    return ""
+
+
 class CoreTestCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
@@ -276,6 +306,61 @@ class HttpHelpersTests(unittest.TestCase):
         finally:
             account_core.urllib.request.urlopen = original
         self.assertEqual(ctx.exception.code, "expired")
+
+    def test_default_user_agent_is_browser(self):
+        self.assertIn("BROWSER_USER_AGENT", account_core.__all__)
+        self.assertIn("Mozilla/5.0", account_core.BROWSER_USER_AGENT)
+        self.assertIn("Android", account_core.BROWSER_USER_AGENT)
+        self.assertIn("Chrome/", account_core.BROWSER_USER_AGENT)
+        captured: list = []
+        original = account_core.urllib.request.urlopen
+        account_core.urllib.request.urlopen = lambda request, *a, **k: (
+            captured.append(request) or _FakeHTTPResponse(b'{"ok":true}')
+        )
+        try:
+            data = account_core.http_json("https://example.com/x", {"a": 1})
+        finally:
+            account_core.urllib.request.urlopen = original
+        self.assertEqual(data, {"ok": True})
+        self.assertEqual(
+            _request_user_agent(captured[0]), account_core.BROWSER_USER_AGENT
+        )
+
+    def test_caller_user_agent_wins(self):
+        original = account_core.urllib.request.urlopen
+        try:
+            for header_key in ("User-Agent", "user-agent"):
+                captured: list = []
+                account_core.urllib.request.urlopen = lambda request, *a, **k: (
+                    captured.append(request) or _FakeHTTPResponse(b'{"ok":true}')
+                )
+                account_core.http_json(
+                    "https://example.com/x",
+                    {"a": 1},
+                    headers={header_key: "my-agent/9.9"},
+                )
+                self.assertEqual(
+                    _request_user_agent(captured[0]),
+                    "my-agent/9.9",
+                    f"调用方传入的 {header_key} 应该优先",
+                )
+        finally:
+            account_core.urllib.request.urlopen = original
+
+    def test_post_sse_default_user_agent_is_browser(self):
+        captured: list = []
+        lines = [b'data: {"type":"response.completed"}\n', b"\n"]
+        original = account_core.urllib.request.urlopen
+        account_core.urllib.request.urlopen = lambda request, *a, **k: (
+            captured.append(request) or _FakeHTTPResponse(lines=lines)
+        )
+        try:
+            account_core.post_sse("https://example.com/x", {"a": 1})
+        finally:
+            account_core.urllib.request.urlopen = original
+        self.assertEqual(
+            _request_user_agent(captured[0]), account_core.BROWSER_USER_AGENT
+        )
 
     def test_http_json_network_error(self):
         original = account_core.urllib.request.urlopen

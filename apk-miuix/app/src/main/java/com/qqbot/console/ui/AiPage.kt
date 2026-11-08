@@ -44,6 +44,7 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var editingId by remember { mutableStateOf<String?>(null) }
     val editing = profiles.firstOrNull { it.optStr("id") == editingId } ?: active
     var accountDialog by remember { mutableStateOf<String?>(null) }
+    var modelPicker by remember { mutableStateOf(false) }
 
     // 进页面时拉一次账号状态（登录 / 退出后也会刷新）
     LaunchedEffect(Unit) { AccountsStore.refresh() }
@@ -100,6 +101,27 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
 
         if (editing != null) {
             group("接口设置 · ${editing.optStr("name")}") {
+                // 认证方式放最前面：到底是 API Key 还是某个账号，先选清楚
+                val auth = editing.optStr("auth")
+                val authIdx = AUTH_IDS.indexOf(auth).coerceAtLeast(0)
+                OverlayDropdownPreference(
+                    title = "认证方式（API Key / 账号）",
+                    summary = if (auth.isBlank()) "API Key" else "${PROVIDER_NAMES[auth] ?: auth} 账号",
+                    items = AUTH_LABELS,
+                    selectedIndex = authIdx,
+                    onSelectedIndexChange = { i -> saveProfileField("auth", AUTH_IDS[i]) },
+                )
+                if (auth.isNotBlank()) {
+                    val acc = AccountsStore.find(auth)
+                    if (acc.signedIn) {
+                        Hint(
+                            "已连接 ${PROVIDER_NAMES[auth] ?: auth} 账号" +
+                                if (acc.account.isBlank()) "。" else "（${acc.account}）。",
+                        )
+                    } else {
+                        Hint("这个账号还没连接，先去上方「AI 账号」里连接，否则这条接口用不了。")
+                    }
+                }
                 val pIdx = PROVIDERS.indexOf(editing.optStr("provider").ifBlank { "openai" }).coerceAtLeast(0)
                 OverlayDropdownPreference(
                     title = "协议",
@@ -108,15 +130,10 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     onSelectedIndexChange = { saveProfileField("provider", PROVIDERS[it]) },
                 )
                 EditPreference("接口地址", editing.optStr("base_url")) { saveProfileField("base_url", it) }
-                EditPreference("模型", editing.optStr("model")) { if (it.isNotBlank()) saveProfileField("model", it) }
-                val auth = editing.optStr("auth")
-                val authIdx = AUTH_IDS.indexOf(auth).coerceAtLeast(0)
-                OverlayDropdownPreference(
-                    title = "认证方式",
-                    summary = if (auth.isBlank()) "用 API Key 调用" else "用 ${PROVIDER_NAMES[auth] ?: auth} 账号登录",
-                    items = AUTH_LABELS,
-                    selectedIndex = authIdx,
-                    onSelectedIndexChange = { i -> saveProfileField("auth", AUTH_IDS[i]) },
+                ArrowPreference(
+                    title = "模型",
+                    summary = editing.optStr("model").ifBlank { "跟随账号默认" },
+                    onClick = { modelPicker = true },
                 )
                 EditPreference(
                     "API Key",
@@ -124,17 +141,6 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     summary = if (auth.isNotBlank()) "已改用账号登录" else null,
                     secret = true,
                 ) { if (it.isNotBlank()) saveProfileField("api_key", it) }
-                if (auth.isNotBlank()) {
-                    val acc = AccountsStore.find(auth)
-                    if (acc.signedIn) {
-                        Hint(
-                            "已用 ${PROVIDER_NAMES[auth] ?: auth} 账号登录" +
-                                if (acc.account.isBlank()) "。" else "（${acc.account}）。",
-                        )
-                    } else {
-                        Hint("${PROVIDER_NAMES[auth] ?: auth} 账号还没连接，先到上方「AI 账号」里连接，否则这条接口用不了。")
-                    }
-                }
                 EditPreference("温度", editing.opt("temperature")?.toString() ?: "0.7", numeric = true) {
                     it.toDoubleOrNull()?.let { v -> saveProfileField("temperature", v.coerceIn(0.0, 2.0)) }
                 }
@@ -195,5 +201,19 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
 
     accountDialog?.let { id ->
         AccountDialog(providerId = id, onDismiss = { accountDialog = null })
+    }
+
+    val pickerProfile = editing
+    if (modelPicker && pickerProfile != null) {
+        ModelPickerDialog(
+            profileId = pickerProfile.optStr("id"),
+            profileName = pickerProfile.optStr("name"),
+            current = pickerProfile.optStr("model"),
+            onPick = { value ->
+                saveProfileField("model", value)
+                Store.toast = if (value.isBlank()) "模型改为跟随账号默认" else "模型已改为 $value"
+            },
+            onDismiss = { modelPicker = false },
+        )
     }
 }

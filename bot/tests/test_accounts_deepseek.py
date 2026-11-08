@@ -166,6 +166,77 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(deepseek._inference_error(500).code, "generic")
 
 
+class PlatformHeaderTests(unittest.TestCase):
+    """platform.deepseek.com 的 WAF 会拦非浏览器 UA（429 Request Blocked）。"""
+
+    def test_client_headers_look_like_browser(self):
+        headers = deepseek._client_headers()
+        self.assertEqual(headers["user-agent"], deepseek.BROWSER_USER_AGENT)
+        self.assertIn("Chrome/", headers["user-agent"])
+        self.assertIn("Mobile Safari", headers["user-agent"])
+        self.assertEqual(headers["accept"], "application/json, text/plain, */*")
+        self.assertEqual(headers["accept-language"], "zh-CN,zh;q=0.9")
+        # 参考实现的 x-client-* 身份头保留
+        self.assertEqual(headers["x-client-platform"], "web")
+        self.assertEqual(headers["x-client-version"], deepseek.CLIENT_VERSION)
+        self.assertIn("x-client-timezone-offset", headers)
+
+    def test_platform_post_sends_browser_headers_origin_and_referer(self):
+        captured = {}
+
+        def fake_http(url, method="GET", headers=None, body=None, timeout=30):
+            captured["url"] = url
+            captured["method"] = method
+            captured["headers"] = dict(headers or {})
+            captured["body"] = body
+            return 200, envelope(
+                {"authorize_url": "https://platform.deepseek.com/dsh/authorize?x=1", "authorize_id": "a", "expires_in": 600}
+            )
+
+        with mock.patch.object(deepseek, "_http_request", side_effect=fake_http):
+            result = deepseek._platform_post("auth_init", {"state": "s"})
+        self.assertEqual(result["authorize_id"], "a")
+        self.assertTrue(captured["url"].endswith("/auth-api/v0/dsh/auth_init"))
+        headers = captured["headers"]
+        self.assertEqual(headers["origin"], deepseek.PLATFORM_ORIGIN)
+        self.assertEqual(headers["referer"], deepseek.PLATFORM_ORIGIN + "/")
+        self.assertEqual(headers["user-agent"], deepseek.BROWSER_USER_AGENT)
+        self.assertEqual(headers["accept"], deepseek.BROWSER_ACCEPT)
+        self.assertEqual(headers["accept-language"], deepseek.BROWSER_ACCEPT_LANGUAGE)
+        self.assertEqual(headers["content-type"], "application/json")
+
+    def test_platform_get_sends_browser_headers_origin_and_referer(self):
+        captured = {}
+
+        def fake_http(url, method="GET", headers=None, body=None, timeout=30):
+            captured["headers"] = dict(headers or {})
+            return 200, envelope({"id": "u1", "email": "a@b.com"})
+
+        with mock.patch.object(deepseek, "_http_request", side_effect=fake_http):
+            profile = deepseek._fetch_profile("tok-1")
+        self.assertEqual(profile["email"], "a@b.com")
+        headers = captured["headers"]
+        self.assertEqual(headers[deepseek.TOKEN_HEADER], "tok-1")
+        self.assertEqual(headers["origin"], deepseek.PLATFORM_ORIGIN)
+        self.assertEqual(headers["referer"], deepseek.PLATFORM_ORIGIN + "/")
+        self.assertEqual(headers["user-agent"], deepseek.BROWSER_USER_AGENT)
+
+    def test_inference_headers_unchanged(self):
+        # api.deepseek.com 推理接口没有 WAF 问题，保持参考实现的 deepseek-harness UA。
+        headers = deepseek._messages_headers("tok", "u1")
+        self.assertTrue(headers["user-agent"].startswith("deepseek-harness/"))
+        self.assertNotEqual(headers["user-agent"], deepseek.BROWSER_USER_AGENT)
+        self.assertNotIn("origin", headers)
+        self.assertNotIn("referer", headers)
+
+    def test_429_messages(self):
+        platform_error = deepseek._platform_error(429)
+        self.assertEqual(platform_error.code, "generic")
+        self.assertIn("风控", str(platform_error))
+        inference_error = deepseek._inference_error(429)
+        self.assertIn("太频繁", str(inference_error))
+
+
 class BeginTests(unittest.TestCase):
     def _router(self, calls, exchange_user=True):
         def route(url, method="GET", headers=None, body=None, timeout=30):
@@ -262,12 +333,18 @@ class BeginTests(unittest.TestCase):
         ).rstrip(b"=").decode()
         self.assertEqual(expected, init["code_challenge"])
 
-        # 平台请求必须带 x-client-* 身份头
+        # 平台请求必须带 x-client-* 身份头，且装成浏览器（WAF 只放行浏览器请求）
         init_request = calls["requests"][0]
-        self.assertEqual(init_request["headers"]["x-client-platform"], "web")
-        self.assertEqual(init_request["headers"]["x-client-version"], deepseek.CLIENT_VERSION)
-        self.assertIn("x-client-timezone-offset", init_request["headers"])
-        self.assertEqual(init_request["headers"]["content-type"], "application/json")
+        headers = init_request["headers"]
+        self.assertEqual(headers["x-client-platform"], "web")
+        self.assertEqual(headers["x-client-version"], deepseek.CLIENT_VERSION)
+        self.assertIn("x-client-timezone-offset", headers)
+        self.assertEqual(headers["content-type"], "application/json")
+        self.assertEqual(headers["user-agent"], deepseek.BROWSER_USER_AGENT)
+        self.assertEqual(headers["accept"], deepseek.BROWSER_ACCEPT)
+        self.assertEqual(headers["accept-language"], deepseek.BROWSER_ACCEPT_LANGUAGE)
+        self.assertEqual(headers["origin"], deepseek.PLATFORM_ORIGIN)
+        self.assertEqual(headers["referer"], deepseek.PLATFORM_ORIGIN + "/")
 
     def test_begin_state_mismatch(self):
         calls = {}
@@ -389,7 +466,12 @@ class ModelListingTests(unittest.TestCase):
         with mock.patch.object(deepseek, "_http_request", return_value=(200, body)) as request:
             models = deepseek._list_models("tok-1")
         self.assertEqual(models, ["deepseek-flash", "deepseek-v4-pro"])
-        self.assertEqual(request.call_args.kwargs["headers"][deepseek.TOKEN_HEADER], "tok-1")
+        headers = request.call_args.kwargs["headers"]
+        self.assertEqual(headers[deepseek.TOKEN_HEADER], "tok-1")
+        # /models 在 api.deepseek.com，不需要平台浏览器头
+        self.assertTrue(headers["user-agent"].startswith("deepseek-harness/"))
+        self.assertNotIn("origin", headers)
+        self.assertNotIn("referer", headers)
 
     def test_list_models_401(self):
         with mock.patch.object(deepseek, "_http_request", return_value=(401, b"{}")):
@@ -517,6 +599,10 @@ class InferenceTests(unittest.TestCase):
         self.assertTrue(captured["url"].endswith("/anthropic/v1/messages"))
         self.assertEqual(captured["headers"][deepseek.TOKEN_HEADER], "secret-token")
         self.assertEqual(captured["headers"]["anthropic-version"], "2023-06-01")
+        # 推理请求不能被平台浏览器的头污染
+        self.assertTrue(captured["headers"]["user-agent"].startswith("deepseek-harness/"))
+        self.assertNotIn("origin", captured["headers"])
+        self.assertNotIn("referer", captured["headers"])
         self.assertEqual(captured["body"]["model"], "deepseek-flash")
         self.assertEqual(captured["body"]["max_tokens"], 64)
         # token 不能出现在错误/日志里（这里只确认没进 URL）

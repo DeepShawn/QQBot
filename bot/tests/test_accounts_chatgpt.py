@@ -260,6 +260,8 @@ class DeviceFlowTests(ChatGPTTestCase):
             accounts_chatgpt.urllib.request.urlopen = original
 
     def test_device_poll_success(self):
+        captured: list = []
+
         class FakeResponse:
             def __enter__(self):
                 return self
@@ -272,8 +274,12 @@ class DeviceFlowTests(ChatGPTTestCase):
                     {"authorization_code": "ac", "code_verifier": "cv"}
                 ).encode("utf-8")
 
+        def fake_urlopen(request, *args, **kwargs):
+            captured.append(request)
+            return FakeResponse()
+
         original = accounts_chatgpt.urllib.request.urlopen
-        accounts_chatgpt.urllib.request.urlopen = lambda *a, **k: FakeResponse()
+        accounts_chatgpt.urllib.request.urlopen = fake_urlopen
         try:
             self.assertEqual(
                 accounts_chatgpt._device_poll_once("dev", "code"),
@@ -281,6 +287,12 @@ class DeviceFlowTests(ChatGPTTestCase):
             )
         finally:
             accounts_chatgpt.urllib.request.urlopen = original
+        headers = {
+            key.lower(): str(value) for key, value in captured[0].header_items()
+        }
+        self.assertEqual(
+            headers.get("user-agent"), account_core.BROWSER_USER_AGENT
+        )
 
 
 class RefreshTests(ChatGPTTestCase):
@@ -362,6 +374,8 @@ class ChatTests(ChatGPTTestCase):
         self.assertEqual(headers["chatgpt-account-id"], "acct-7")
         self.assertEqual(headers["OpenAI-Beta"], "responses=experimental")
         self.assertEqual(headers["Authorization"], f"Bearer {record['access']}")
+        self.assertEqual(headers["User-Agent"], account_core.BROWSER_USER_AGENT)
+        self.assertEqual(headers["originator"], accounts_chatgpt.ORIGINATOR)
 
     def test_chat_prefers_final_message(self):
         self._patch(

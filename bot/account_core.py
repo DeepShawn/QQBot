@@ -73,6 +73,15 @@ ATTEMPT_TIMEOUT_SECONDS = 300.0      # 单次登录 5 分钟
 ATTEMPT_KEEP_SECONDS = 600.0         # 结束后保留 10 分钟供迟到轮询
 REFRESH_SKEW_SECONDS = 60            # 过期前 60 秒就刷新
 HTTP_TIMEOUT_SECONDS = 30.0
+
+# 账号相关的 HTTP 请求默认用 Android Chrome 的 UA：不少平台的 WAF 会对非浏览器 UA
+# 直接返回 429（用户实测 DeepSeek 登录首次即被拦）。调用方传入 headers 时以传入值为准。
+# 注意：Claude / Gemini 按各自参考实现要求单独设置 UA，不用这个默认值。
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+)
+
 _TERMINAL_PHASES = ("done", "failed", "cancelled")
 
 CALLBACK_OK_HTML = (
@@ -101,6 +110,7 @@ __all__ = [
     "PROVIDER_IDS",
     "PROVIDER_NAMES",
     "ERRORS",
+    "BROWSER_USER_AGENT",
     "AccountError",
     "Attempt",
     "AttemptCancelled",
@@ -514,7 +524,7 @@ def http_json(
     401/403 映射成 expired、429 映射成额度提示。
     """
     data: bytes | None = None
-    request_headers = {"Accept": "application/json", "User-Agent": "qqbot-account/1.0"}
+    request_headers = {"Accept": "application/json", "User-Agent": BROWSER_USER_AGENT}
     if payload is not None:
         if form:
             data = urllib.parse.urlencode(payload).encode("utf-8")
@@ -568,7 +578,7 @@ def post_sse(
     request_headers = {
         "Accept": "text/event-stream",
         "Content-Type": "application/json",
-        "User-Agent": "qqbot-account/1.0",
+        "User-Agent": BROWSER_USER_AGENT,
     }
     if headers:
         request_headers.update({str(k): str(v) for k, v in headers.items()})

@@ -318,6 +318,9 @@ class ChatTests(ClaudeTestCase):
         self.assertEqual(headers["Authorization"], "Bearer access-token")
         self.assertIn("oauth-2025-04-20", headers["anthropic-beta"])
         self.assertEqual(headers["x-app"], "cli")
+        # Claude 按 pi-ai 要求用 claude-cli UA，不能被通用浏览器 UA 覆盖
+        self.assertIn("claude-cli/", headers["user-agent"])
+        self.assertNotEqual(headers["user-agent"], account_core.BROWSER_USER_AGENT)
 
     def test_chat_empty_conversation(self):
         with self.assertRaises(account_core.AccountError):

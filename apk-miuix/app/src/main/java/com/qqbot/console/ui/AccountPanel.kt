@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -185,7 +186,7 @@ fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
                         input = input,
                         actionError = actionError,
                         onInput = { input = it },
-                        onOpenUrl = { url -> openUrl(ctx, url) },
+                        onOpenUrl = { url -> openInBrowser(ctx, url) },
                         onCopy = { text ->
                             copyText(ctx, text)
                             Store.toast = "已复制"
@@ -276,7 +277,7 @@ private fun AttemptBody(
     when (a.phase) {
         "open" -> {
             Text(
-                "在浏览器里完成登录后，这里会自动继续。",
+                "请用浏览器完成登录，完成后回到 App，这里会自动继续。",
                 fontSize = 13.sp,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
@@ -302,7 +303,7 @@ private fun AttemptBody(
 
         "device" -> {
             Text(
-                "在打开的网页里输入下面的一次性代码：",
+                "请用浏览器打开网页，输入下面的一次性代码，完成后回到 App：",
                 fontSize = 13.sp,
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
@@ -459,9 +460,75 @@ private fun copyText(ctx: Context, text: String) {
     }
 }
 
-private fun openUrl(ctx: Context, url: String) {
+/** 常见浏览器包名（含国内厂商的）。不要放桌面 launcher。 */
+private val KNOWN_BROWSERS = listOf(
+    "com.android.chrome",
+    "com.chrome.beta",
+    "com.chrome.dev",
+    "org.mozilla.firefox",
+    "com.microsoft.emmx",
+    "com.android.browser",
+    "org.chromium.chrome",
+    "com.huawei.browser",
+    "com.sec.android.app.sbrowser",
+    "com.miui.browser",
+    "com.mi.globalbrowser",
+    "com.vivo.browser",
+    "com.heytap.browser",
+    "com.oppo.browser",
+    "com.quark.browser",
+    "com.tencent.mtt",
+    "com.baidu.searchbox",
+    "com.UCMobile",
+)
+
+/**
+ * 强制用浏览器打开登录链接。手机上装了 ChatGPT / Claude 等 AI App 时，
+ * 默认的 ACTION_VIEW 可能被它们接管，OAuth 的本地回调就收不到；这里用 setPackage
+ * 指定真实浏览器。一个浏览器都没找到时才退回系统默认。
+ */
+private fun openInBrowser(ctx: Context, url: String) {
+    val uri = Uri.parse(url)
+    val pm = ctx.packageManager
+    val view = Intent(Intent.ACTION_VIEW, uri)
+
+    // 能处理 https 链接的应用
+    val handlers: List<String> = try {
+        pm.queryIntentActivities(view, PackageManager.MATCH_ALL).map { it.activityInfo.packageName }
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    // 先收集系统认定的浏览器（CATEGORY_APP_BROWSER），再按常见包名补齐
+    val candidates = LinkedHashSet<String>()
     try {
-        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        pm.queryIntentActivities(
+            Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER),
+            PackageManager.MATCH_ALL,
+        ).forEach { ri ->
+            val pkg = ri.activityInfo.packageName
+            if (pkg in handlers) candidates += pkg
+        }
+    } catch (_: Exception) {
+    }
+    KNOWN_BROWSERS.forEach { pkg -> if (pkg in handlers) candidates += pkg }
+
+    for (pkg in candidates) {
+        try {
+            ctx.startActivity(
+                Intent(Intent.ACTION_VIEW, uri).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            Store.toast = "已用浏览器打开，请完成登录后回到 App"
+            return
+        } catch (_: Exception) {
+            // 这个包打不开就试下一个
+        }
+    }
+
+    // 没找到可用的浏览器：退回系统默认（至少还能打开）
+    try {
+        ctx.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        Store.toast = "已打开链接，请用浏览器完成登录后回到 App"
     } catch (e: Exception) {
         Store.toast = "打不开浏览器：${e.message ?: "没有可用的浏览器"}"
     }

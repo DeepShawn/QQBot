@@ -46,6 +46,16 @@ TOKEN_HEADER = "x-dsh-auth-token"
 CLIENT_VERSION = "0.2.2-rc.1"
 CLIENT_LOCALE = "zh_CN"
 
+# platform.deepseek.com 的 WAF（Server: CW）会拦截非浏览器 UA，直接回 429
+# "Request Blocked"；平台 auth-api 的请求统一伪装成 Android Chrome 移动端浏览器。
+# api.deepseek.com 的推理接口没有这个限制，那边仍用参考实现的 deepseek-harness UA。
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Linux; Android 14; 22011211C) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36"
+)
+BROWSER_ACCEPT = "application/json, text/plain, */*"
+BROWSER_ACCEPT_LANGUAGE = "zh-CN,zh;q=0.9"
+
 CALLBACK_PATH = "/oauth/callback"
 # 回调服务起不来时，仍用回环地址做 redirect_uri；浏览器打不开也没关系，
 # 用户把地址栏里的完整网址粘回来即可。
@@ -83,8 +93,14 @@ def _timezone_offset_seconds() -> int:
 
 
 def _client_headers() -> dict:
-    """参考实现给平台请求带的客户端身份头（x-client-*）。"""
+    """平台 auth-api 的请求头：浏览器身份 + 参考实现的 x-client-* 身份头。
+
+    platform.deepseek.com 的 WAF 只放行浏览器形态的请求，缺 UA 会 429。
+    """
     return {
+        "user-agent": BROWSER_USER_AGENT,
+        "accept": BROWSER_ACCEPT,
+        "accept-language": BROWSER_ACCEPT_LANGUAGE,
         "x-client-bundle-id": "",
         "x-client-platform": "web",
         "x-client-version": CLIENT_VERSION,
@@ -193,7 +209,8 @@ def _platform_error(status: int, raw: bytes = b"") -> AccountError:
     if status in (401, 403):
         return AccountError("expired", "登录已过期，重新连接一次")
     if status == 429:
-        return AccountError("generic", "请求太频繁了，稍后再试")
+        # 平台 WAF 拦非浏览器请求时也回 429；正常不该出现（请求头已按浏览器形态发）。
+        return AccountError("generic", "DeepSeek 拒绝了请求（可能被风控），稍后再试")
     if 500 <= status < 600:
         return AccountError("generic", "DeepSeek 服务暂时出错了，稍后再试")
     return AccountError("generic", "DeepSeek 登录没有完成，再试一次")
@@ -224,6 +241,9 @@ def _platform_post(method: str, payload: dict, timeout: int = HTTP_TIMEOUT) -> d
     url = "%s/auth-api/v0/dsh/%s" % (PLATFORM_ORIGIN, method)
     headers = _client_headers()
     headers["content-type"] = "application/json"
+    # 浏览器同源请求会带的头，WAF 校验的一部分。
+    headers["origin"] = PLATFORM_ORIGIN
+    headers["referer"] = PLATFORM_ORIGIN + "/"
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     status, raw = _http_request(url, method="POST", headers=headers, body=body, timeout=timeout)
     if status != 200:
@@ -241,6 +261,8 @@ def _platform_get(path: str, token: str, timeout: int = HTTP_TIMEOUT) -> dict:
     url = PLATFORM_ORIGIN + path
     headers = _client_headers()
     headers[TOKEN_HEADER] = token
+    headers["origin"] = PLATFORM_ORIGIN
+    headers["referer"] = PLATFORM_ORIGIN + "/"
     status, raw = _http_request(url, headers=headers, timeout=timeout)
     if status != 200:
         try:

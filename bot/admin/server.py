@@ -16,9 +16,11 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent.parent     # qqbot/
 BOT = ROOT / "bot"
@@ -1048,6 +1050,237 @@ def api_update_start() -> dict:
     }
 
 
+# ---------------------------------------------------------------- 模型列表 API
+MODELS_TIMEOUT = 15
+
+
+class ModelsError(Exception):
+    """模型列表的内部异常：消息是给用户看的中文短句，不带 key/URL。"""
+
+
+def _ai_chat_config(cfg) -> dict:
+    try:
+        ai = (cfg or {}).get("plugins", {}).get("ai_chat", {})
+    except Exception:
+        return {}
+    return ai if isinstance(ai, dict) else {}
+
+
+def _profile_list(ai: dict) -> list[dict]:
+    """优先用 profiles 数组；老配置没有 profiles 时按顶层字段拼一套（同前端 legacyProfiles）。"""
+    if isinstance(ai, dict):
+        profiles = ai.get("profiles")
+        if isinstance(profiles, list):
+            cleaned = [p for p in profiles
+                       if isinstance(p, dict) and str(p.get("id") or "").strip()]
+            if cleaned:
+                return cleaned
+        return [{
+            "id": str(ai.get("active_profile") or "default"),
+            "name": "默认接口",
+            "provider": ai.get("provider") or "openai",
+            "base_url": ai.get("base_url") or "",
+            "api_key": ai.get("api_key") or "",
+            "model": ai.get("model") or "",
+            "auth": ai.get("auth") or "",
+        }]
+    return []
+
+
+def _dedupe_models(items) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items or []:
+        name = ""
+        if isinstance(item, str):
+            name = item.strip()
+        elif isinstance(item, dict):
+            name = str(item.get("id") or item.get("name") or item.get("model") or "").strip()
+        if name.startswith("models/"):
+            name = name[len("models/"):]
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _models_payload_items(payload):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("data", "models", "result", "items"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return value
+    return []
+
+
+def _parse_models_payload(payload) -> list[str]:
+    return _dedupe_models(_models_payload_items(payload))
+
+
+def _parse_gemini_models(payload) -> list[str]:
+    """Gemini /v1beta/models：只保留支持 generateContent 的模型。"""
+    names: list[str] = []
+    for item in _models_payload_items(payload):
+        if not isinstance(item, dict):
+            continue
+        methods = item.get("supportedGenerationMethods")
+        if isinstance(methods, (list, tuple)) and methods:
+            if "generateContent" not in [str(m) for m in methods]:
+                continue
+        name = str(item.get("name") or "").strip()
+        if name:
+            names.append(name)
+    return _dedupe_models(names)
+
+
+def _openai_models_url(base_url: str) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    if base.endswith("/v1") or base.endswith("/v1beta/openai"):
+        return base + "/models"
+    return base + "/v1/models"
+
+
+def _claude_models_url(base_url: str) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    if base.endswith("/v1"):
+        return base + "/models"
+    return base + "/v1/models"
+
+
+def _gemini_models_url(base_url: str, api_key: str) -> str:
+    base = str(base_url or "").strip().rstrip("/")
+    prefix = base if base.endswith("/v1beta") else base + "/v1beta"
+    return prefix + "/models?key=" + quote(str(api_key or ""), safe="")
+
+
+def _http_json_models(url: str, headers=None):
+    """GET 一个 JSON；失败抛 ModelsError（中文，不含 URL/key）。"""
+    merged_headers = {"Accept": "application/json"}
+    for key, value in (headers or {}).items():
+        merged_headers[str(key)] = str(value)
+    req = urllib.request.Request(url, headers=merged_headers)
+    try:
+        with urllib.request.urlopen(req, timeout=MODELS_TIMEOUT) as resp:
+            raw = resp.read(2 << 20)
+    except urllib.error.HTTPError as e:
+        code = int(getattr(e, "code", 0) or 0)
+        if code in (401, 403):
+            raise ModelsError("密钥不对或没有权限") from None
+        if code == 404:
+            raise ModelsError("接口地址不对") from None
+        raise ModelsError(f"获取模型失败（HTTP {code}）") from None
+    except Exception:
+        raise ModelsError("网络连不上") from None
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise ModelsError("接口返回的模型列表看不懂") from None
+
+
+def _fetch_api_models(profile: dict) -> list[str]:
+    provider = str(profile.get("provider") or "openai").strip().lower()
+    base_url = str(profile.get("base_url") or "").strip()
+    api_key = str(profile.get("api_key") or "").strip()
+    if not base_url:
+        raise ModelsError("先填接口地址")
+    if not base_url.lower().startswith(("http://", "https://")):
+        raise ModelsError("接口地址要以 http(s):// 开头")
+    if not api_key:
+        raise ModelsError("先填 API Key")
+    if provider == "gemini":
+        payload = _http_json_models(_gemini_models_url(base_url, api_key))
+        models = _parse_gemini_models(payload)
+    elif provider == "claude":
+        payload = _http_json_models(_claude_models_url(base_url), {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+        })
+        models = _parse_models_payload(payload)
+    else:
+        payload = _http_json_models(_openai_models_url(base_url), {
+            "Authorization": "Bearer " + api_key,
+        })
+        models = _parse_models_payload(payload)
+    if not models:
+        raise ModelsError("接口没有返回可用模型，检查接口设置")
+    return models
+
+
+def _account_models(provider: str) -> dict:
+    """账号模式：返回该账号模块的模型列表；没登录/模块缺失都提示先连接。"""
+    if account_core is None:
+        return {"ok": False, "error": "先连接这个账号"}
+    try:
+        module = account_core.load_provider(provider)
+    except Exception:
+        return {"ok": False, "error": "先连接这个账号"}
+    record = None
+    try:
+        getter = getattr(account_core, "get_record", None)
+        if callable(getter):
+            record = getter(provider)
+    except Exception:
+        record = None
+    if not isinstance(record, dict) or not record:
+        return {"ok": False, "error": "先连接这个账号"}
+    models: list[str] = []
+    static = getattr(module, "MODELS", None)
+    if isinstance(static, (list, tuple)):
+        models = _dedupe_models([str(m) for m in static if str(m or "").strip()])
+    if provider == "deepseek":
+        # DeepSeek 登录时抓过账号真实可用模型，优先用它
+        extra = record.get("extra")
+        if isinstance(extra, dict):
+            fetched = extra.get("models")
+            if isinstance(fetched, (list, tuple)):
+                picked = _dedupe_models([str(m) for m in fetched if str(m or "").strip()])
+                if picked:
+                    models = picked
+    if not models:
+        return {"ok": False, "error": "这个账号没有可用模型"}
+    default = str(getattr(module, "DEFAULT_MODEL", "") or "").strip()
+    if default not in models:
+        default = models[0]
+    return {"ok": True, "source": "account", "models": models, "default": default}
+
+
+def api_models(profile_id: str = "") -> dict:
+    """GET /api/models?profile=：从 config.json 取该接口的设置并拉模型列表。"""
+    try:
+        cfg = load_config()
+    except Exception:
+        return {"ok": False, "error": "读取配置失败，请稍后再试"}
+    ai = _ai_chat_config(cfg)
+    profiles = _profile_list(ai)
+    if not profiles:
+        return {"ok": False, "error": "找不到这套接口"}
+    requested = str(profile_id or "").strip()
+    wanted = requested or str(ai.get("active_profile") or "").strip() or profiles[0]["id"]
+    profile = None
+    for item in profiles:
+        if str(item.get("id") or "") == wanted:
+            profile = item
+            break
+    if profile is None and not requested:
+        # active_profile 可能是旧记录（已被删掉），退回第一套接口
+        profile = profiles[0]
+    if profile is None:
+        return {"ok": False, "error": "找不到这套接口"}
+    auth = str(profile.get("auth") or "").strip().lower()
+    if auth:
+        return _account_models(auth)
+    try:
+        models = _fetch_api_models(profile)
+    except ModelsError as e:
+        return {"ok": False, "error": str(e)}
+    current = str(profile.get("model") or "").strip()
+    default = current if current in models else models[0]
+    return {"ok": True, "source": "api", "models": models, "default": default}
+
+
 # ---------------------------------------------------------------- HTTP
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -1105,6 +1338,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "providers": PROVIDER_PRESETS})
             if path == "/api/accounts":
                 return self._json(_api_safe(api_accounts_list, "读取账号状态失败，请稍后再试"))
+            if path == "/api/models":
+                profile_id = (qs.get("profile") or [""])[0]
+                return self._json(_api_safe(lambda: api_models(profile_id),
+                                            "获取模型列表失败，请稍后再试"))
             if path == "/api/accounts/poll":
                 attempt_id = (qs.get("attempt") or [""])[0]
                 return self._json(_api_safe(lambda: api_accounts_poll(attempt_id),
