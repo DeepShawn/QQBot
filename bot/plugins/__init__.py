@@ -1,1 +1,1 @@
-from . import ai_chat, commands, group_admin, image_gen, keyword  # noqa: F401
+from . import ai_chat, commands, group_admin, image_gen, keyword, python_run  # noqa: F401

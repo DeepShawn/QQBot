@@ -23,7 +23,7 @@ from config import Config  # noqa: E402
 from context import Context  # noqa: E402
 from dispatcher import Dispatcher  # noqa: E402
 from onebot import OneBotClient  # noqa: E402
-from plugins import ai_chat, commands, group_admin, image_gen, keyword  # noqa: E402
+from plugins import ai_chat, commands, group_admin, image_gen, keyword, python_run  # noqa: E402
 
 
 def setup_logging(level: str, log_file: Path) -> logging.Logger:
@@ -57,7 +57,7 @@ async def async_main(config_path: Path) -> int:
     ctx.started_at = time.time()
 
     dispatcher = Dispatcher(ctx)
-    for module in (commands, group_admin, keyword, image_gen, ai_chat):
+    for module in (commands, group_admin, keyword, python_run, image_gen, ai_chat):
         dispatcher.register(module.Plugin(ctx))
 
     ob = config.get("onebot", default={}) or {}
