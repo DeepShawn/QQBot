@@ -1,7 +1,10 @@
 package com.qqbot.console.ui
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
@@ -29,6 +32,7 @@ import com.qqbot.console.AppUpdates
 import com.qqbot.console.BotUpdates
 import com.qqbot.console.Env
 import com.qqbot.console.Installer
+import com.qqbot.console.ProotService
 import com.qqbot.console.Store
 import com.qqbot.console.objects
 import com.qqbot.console.patchOf
@@ -48,6 +52,11 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val scope = rememberCoroutineScope()
     var logs by remember { mutableStateOf<String?>(null) }
     var confirmReinstall by remember { mutableStateOf(false) }
+
+    // ---------- 后台运行 ----------
+    var keepAlive by remember { mutableStateOf(ProotService.keepAliveEnabled(ctx)) }
+    // 每次重组都读一次，用户从系统设置回来时能立刻看到新状态（调用很轻）
+    val batteryIgnored = isIgnoringBatteryOptimizations(ctx)
 
     // ---------- 更新 ----------
     var autoCheck by remember { mutableStateOf(AppUpdates.autoCheckEnabled(ctx)) }
@@ -183,6 +192,33 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             }
         }
 
+        group("后台运行") {
+            SwitchPreference(
+                title = "后台常驻（关掉 App 也继续跑）",
+                summary = "关掉界面后机器人继续运行，通知栏保留「机器人控制台」",
+                checked = keepAlive,
+                onCheckedChange = { on ->
+                    keepAlive = on
+                    ProotService.setKeepAlive(ctx, on)
+                    if (on) ProotService.scheduleKeepAlive(ctx) else ProotService.cancelKeepAlive(ctx)
+                    Store.toast = if (on) "已开启后台常驻" else "已关闭后台常驻"
+                },
+            )
+            ArrowPreference(
+                title = "电池优化",
+                summary = if (batteryIgnored) "已忽略电池优化，不会被省电限制" else "未忽略，点一下去设置",
+                onClick = { requestIgnoreBatteryOptimizations(ctx) },
+            )
+            ArrowPreference(
+                title = "小米自启动 / 省电策略",
+                summary = "MIUI 需允许自启动，省电策略设为「无限制」",
+                onClick = { openAutoStartSettings(ctx) },
+            )
+        }
+        item { Hint("关掉 App 后通知栏会保留「机器人控制台」常驻通知，服务继续在后台运行。") }
+        item { Hint("小米 / 红米：需要允许自启动，并把省电策略设为「无限制」，否则后台可能被系统清理。") }
+        item { Hint("在最近任务里上滑会清理 App；可以在最近任务里长按本 App 锁定，防止被清掉。") }
+
         group("更新") {
             ArrowPreference(
                 title = if (AppUpdates.checking) "正在检查更新…" else "检查更新",
@@ -273,4 +309,58 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             Installer.reinstall()
         },
     )
+}
+
+// ============================================================ 后台运行相关的小工具
+
+private fun isIgnoringBatteryOptimizations(ctx: Context): Boolean = try {
+    val pm = ctx.getSystemService(PowerManager::class.java)
+    pm?.isIgnoringBatteryOptimizations(ctx.packageName) == true
+} catch (_: Exception) {
+    false
+}
+
+private fun requestIgnoreBatteryOptimizations(ctx: Context) {
+    val pkg = ctx.packageName
+    try {
+        ctx.startActivity(
+            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$pkg"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        return
+    } catch (_: Exception) {
+    }
+    try {
+        ctx.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        Store.toast = "在列表里把「机器人控制台」设为不限制"
+    } catch (e: Exception) {
+        Store.toast = "打不开电池优化设置：${e.message ?: "系统不支持"}"
+    }
+}
+
+/** MIUI 的自启动 / 省电策略入口；没有就退回应用详情页。 */
+private fun openAutoStartSettings(ctx: Context) {
+    val pkg = ctx.packageName
+    val candidates = listOf(
+        Intent("miui.intent.action.OP_AUTO_START").putExtra("extra_pkgname", pkg).putExtra("package", pkg),
+        Intent("miui.intent.action.APP_PERM_EDITOR").putExtra("extra_pkgname", pkg).putExtra("package", pkg),
+    )
+    for (intent in candidates) {
+        try {
+            ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            Store.toast = "在设置里允许自启动，并把省电策略设为「无限制」"
+            return
+        } catch (_: Exception) {
+            // 不是 MIUI 或入口不存在，试下一个
+        }
+    }
+    try {
+        ctx.startActivity(
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        Store.toast = "在应用详情里找到自启动 / 省电策略并设为允许"
+    } catch (e: Exception) {
+        Store.toast = "打不开应用设置：${e.message ?: "系统不支持"}"
+    }
 }

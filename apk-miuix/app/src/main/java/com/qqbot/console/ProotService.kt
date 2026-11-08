@@ -1,5 +1,6 @@
 package com.qqbot.console
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -9,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import android.os.PowerManager
+import android.os.SystemClock
 import android.net.wifi.WifiManager
 import java.io.File
 
@@ -19,6 +21,10 @@ class ProotService : Service() {
         private const val CHANNEL_ID = "qqbot-service"
         private const val NOTIFY_ID = 1001
         private const val PREFS = "service"
+        private const val KEY_KEEP_ALIVE = "keep_alive"
+        private const val KEEP_ALIVE_REQUEST = 2001
+        private const val KEEP_ALIVE_INTERVAL = 15L * 60 * 1000
+        private const val KEEP_ALIVE_ACTION = "com.qqbot.console.action.KEEP_ALIVE"
 
         @Volatile var lastLog = ""
             private set
@@ -29,12 +35,65 @@ class ProotService : Service() {
         fun start(ctx: Context) {
             setWanted(ctx, true)
             ctx.startForegroundService(Intent(ctx, ProotService::class.java))
+            scheduleKeepAlive(ctx)
         }
 
         fun stop(ctx: Context) {
             setWanted(ctx, false)
+            cancelKeepAlive(ctx)
             ctx.stopService(Intent(ctx, ProotService::class.java))
         }
+
+        /** 「后台常驻」开关（默认开）：关掉 App 后靠闹钟每 15 分钟把服务拉回来。 */
+        fun keepAliveEnabled(ctx: Context): Boolean =
+            ctx.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(KEY_KEEP_ALIVE, true)
+
+        fun setKeepAlive(ctx: Context, on: Boolean) {
+            ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_KEEP_ALIVE, on).apply()
+        }
+
+        /** 保活闹钟响 / App 被划掉时调用：用户想让服务跑、环境还在、进程没了就拉起来。 */
+        fun ensureRunning(ctx: Context) {
+            try {
+                if (!isWanted(ctx)) return
+                if (!Env.validate(ctx)) return
+                if (isRunning()) return
+                ctx.startForegroundService(Intent(ctx, ProotService::class.java))
+            } catch (_: Exception) {
+            }
+        }
+
+        /** 每 15 分钟发一次显式广播（不精确，省电），KeepAliveReceiver 收到后检查 / 拉起服务。 */
+        fun scheduleKeepAlive(ctx: Context) {
+            try {
+                if (!isWanted(ctx) || !keepAliveEnabled(ctx)) return
+                val am = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+                am.setInexactRepeating(
+                    AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                    SystemClock.elapsedRealtime() + KEEP_ALIVE_INTERVAL,
+                    KEEP_ALIVE_INTERVAL,
+                    keepAliveIntent(ctx),
+                )
+            } catch (_: Exception) {
+            }
+        }
+
+        fun cancelKeepAlive(ctx: Context) {
+            try {
+                val am = ctx.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                val pi = keepAliveIntent(ctx)
+                am?.cancel(pi)
+                pi.cancel()
+            } catch (_: Exception) {
+            }
+        }
+
+        private fun keepAliveIntent(ctx: Context): PendingIntent = PendingIntent.getBroadcast(
+            ctx,
+            KEEP_ALIVE_REQUEST,
+            Intent(ctx, KeepAliveReceiver::class.java).setAction(KEEP_ALIVE_ACTION),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
 
         /** 记住「用户希望服务运行」，被系统杀掉后 START_STICKY 拉起时据此恢复。 */
         private fun setWanted(ctx: Context, v: Boolean) =
@@ -71,6 +130,7 @@ class ProotService : Service() {
         }
         acquireLocks()
         Thread({ runProot() }, "proot-runner").start()
+        scheduleKeepAlive(this)
         return START_STICKY
     }
 
@@ -99,7 +159,7 @@ class ProotService : Service() {
             Log.write("[app] 启动 proot：${pb.command().first()}")
             val p = pb.start()
             process = p
-            notify("QQ 机器人运行中")
+            notify("QQ 机器人运行中（关掉 App 后仍在后台运行）")
             // 必须持续读输出，否则 64KB 管道写满后子进程会卡住
             p.inputStream.bufferedReader().useLines { lines ->
                 lines.forEach { line ->
@@ -119,6 +179,21 @@ class ProotService : Service() {
             process = null
             notify("服务已停止")
         }
+    }
+
+    /**
+     * 用户在最近任务里划掉 App：不要停服务。前台服务 + 保活闹钟让机器人在后台继续跑，
+     * 通知栏保留「机器人控制台」常驻通知，点一下可以回到 App。
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        try {
+            if (isWanted(this)) {
+                notify("QQ 机器人运行中（App 已关闭，仍在后台运行）")
+                scheduleKeepAlive(this)
+            }
+        } catch (_: Exception) {
+        }
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
@@ -166,6 +241,7 @@ class ProotService : Service() {
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .setContentIntent(intent)
             .build()
     }
