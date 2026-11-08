@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -178,22 +179,37 @@ class Config:
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.data: dict = {}
-        self._mtime: float = 0.0
+        # 有的运行环境（proot）里 stat/statx 可能返回 ENOSYS，热加载因此改用内容摘要比较
+        self._digest: str = ""
+
+    def _read_text(self) -> str | None:
+        try:
+            return self.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return None
+
+    @staticmethod
+    def _digest_of(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()
 
     def load(self) -> dict:
-        raw = {}
-        if self.path.exists():
+        raw: dict = {}
+        text = self._read_text()
+        if text is not None:
             try:
-                raw = json.loads(self.path.read_text(encoding="utf-8"))
+                raw = json.loads(text)
             except Exception as e:  # 配置写错时保留旧配置
                 raise ValueError(f"config.json 解析失败: {e}") from e
         self.data = deep_merge(DEFAULTS, raw)
-        self._mtime = self.path.stat().st_mtime if self.path.exists() else 0.0
+        self._digest = self._digest_of(text or "")
         return self.data
 
     def save_default(self) -> None:
-        self.path.write_text(json.dumps(DEFAULTS, ensure_ascii=False, indent=2), encoding="utf-8")
-        self._mtime = self.path.stat().st_mtime
+        text = json.dumps(DEFAULTS, ensure_ascii=False, indent=2)
+        self.path.write_text(text, encoding="utf-8")
+        self._digest = self._digest_of(text)
 
     def get(self, *keys, default=None):
         node = self.data
@@ -204,10 +220,19 @@ class Config:
         return node
 
     def reload_if_changed(self) -> bool:
-        if not self.path.exists():
+        """内容变了才重载（不依赖 stat mtime，避免 proot 下 ENOSYS 报错）。"""
+        text = self._read_text()
+        if text is None:
             return False
-        m = self.path.stat().st_mtime
-        if m == self._mtime:
+        digest = self._digest_of(text)
+        if digest == self._digest:
             return False
-        self.load()
+        try:
+            raw = json.loads(text)
+        except Exception:
+            # 文件正在被写入/写坏了：记住这次内容，等下次变化再试，避免每 2 秒刷错误
+            self._digest = digest
+            return False
+        self.data = deep_merge(DEFAULTS, raw)
+        self._digest = digest
         return True
