@@ -314,6 +314,10 @@ def _action_label(action: dict) -> str:
 
 
 async def _before_step(progress: _Progress, step_no: int, action: dict) -> None:
+    try:
+        progress.ctx.log.info("agent 第%s步：%s", step_no, _action_label(action))
+    except Exception:
+        pass
     await progress.say(f"🛠 第{step_no}步：{_action_label(action)}")
     if str(action.get("action") or "").strip().lower() == "install_package":
         await progress.say(f"📦 正在安装 {action.get('name')}…")
@@ -349,6 +353,8 @@ async def _run_native(
     ctx, event, ai_cfg: dict, prompt: str, progress: _Progress
 ) -> dict:
     kwargs = _model_kwargs(ai_cfg)
+    # chat_with_tools 只支持 OpenAI 兼容 API Key，没有 auth 参数
+    kwargs.pop("auth", None)
     started = time.monotonic()
     history = [
         {"role": "system", "content": _SYSTEM_BASE},
@@ -494,3 +500,13 @@ async def run_task(ctx, event, prompt: str) -> dict:
         except Exception:
             pass
         raise
+    except Exception as e:  # 未预期异常也要告诉用户，不能静默失败
+        try:
+            ctx.log.exception("agent 任务失败")
+        except Exception:
+            pass
+        try:
+            await ctx.reply(event, f"⚠️ 任务失败：{type(e).__name__}: {str(e)[:200]}")
+        except Exception:
+            pass
+        return {"ok": False, "reason": "exception"}
