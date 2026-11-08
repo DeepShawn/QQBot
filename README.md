@@ -484,6 +484,7 @@ App 的「接口设置」里：
 - Gemini 需要账号地区支持 Gemini Code Assist；DeepSeek 走 `platform.deepseek.com` 授权。
 - 浏览器和机器人要在同一台设备上（回调地址是 `127.0.0.1`）；用另一台电脑打开网页控制台时，选「粘贴网址 / 验证码」的方式完成登录。
 - 登录会**优先用 Chrome 打开**（没装 Chrome 就用系统默认浏览器）；不要用 ChatGPT / Claude 等官方 App 登录，App 的登录态不能授权给机器人。
+- 接口配置（认证方式、模型、账号等）保存在 App 私有运行环境的 `bot/config.json`；它和 `bot/data/` 都在 App 的 `/root` 下，更新 App 也会保留。3.7 起启动时的代码同步不会再覆盖这两个位置。
 
 ## 十一、自动更新
 
@@ -526,10 +527,13 @@ curl -s http://127.0.0.1:8080/api/update/bot/status   # 看进度
 
 独立 App 启动时会检查手机存储里的 `Download/DSH-Go/qqbot-src/`：
 如果存在，就把里面的 `bot/`、`scripts/`、`*.sh` 同步进 App 内的运行环境再启动。
+**同步只覆盖程序文件**：运行环境里的 `bot/config.json`、`bot/data/`、`bot/.update-meta.json` 会先备份、同步后恢复，
+所以 App 里改的模型/账号配置不会因为重启被这个目录里的旧配置覆盖。
 
 ```bash
 # 在开发机/手机 DSH 里更新代码后
-rsync -a --exclude data --exclude logs bot/ /sdcard/Download/DSH-Go/qqbot-src/bot/
+rsync -a --exclude data --exclude logs --exclude config.json --exclude .update-meta.json \
+  bot/ /sdcard/Download/DSH-Go/qqbot-src/bot/
 cp scripts/*.sh start-all.sh /sdcard/Download/DSH-Go/qqbot-src/   # 按需
 ```
 然后在 App 里「彻底关闭」→「开启服务」即可生效（不用重装 900MB 的 rootfs）。

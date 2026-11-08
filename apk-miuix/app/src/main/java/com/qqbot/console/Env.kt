@@ -216,9 +216,20 @@ object Env {
                 // 可选：把手机存储里的代码同步进运行环境（存在才同步）
                 "if [ -d /sdcard/Download/DSH-Go/qqbot-src ]; then " +
                 "echo '[sync] 从 sdcard/Download/DSH-Go/qqbot-src 同步机器人代码'; " +
+                // 用户配置 / 账号数据 / 更新记录先挪到 /tmp 备份，同步完再原样放回，
+                // 避免被 qqbot-src 里那份旧的 config.json 覆盖（重启后 AI 配置变回默认就是它干的）
+                "mkdir -p /tmp/qqbot-sync-keep; " +
+                "[ -f /root/workspace/qqbot/bot/config.json ] && mv /root/workspace/qqbot/bot/config.json /tmp/qqbot-sync-keep/config.json 2>/dev/null; " +
+                "[ -f /root/workspace/qqbot/bot/.update-meta.json ] && mv /root/workspace/qqbot/bot/.update-meta.json /tmp/qqbot-sync-keep/update-meta.json 2>/dev/null; " +
+                "[ -d /root/workspace/qqbot/bot/data ] && mv /root/workspace/qqbot/bot/data /tmp/qqbot-sync-keep/data 2>/dev/null; " +
                 "cp -a /sdcard/Download/DSH-Go/qqbot-src/bot/. /root/workspace/qqbot/bot/ 2>/dev/null; " +
                 "[ -d /sdcard/Download/DSH-Go/qqbot-src/scripts ] && cp -a /sdcard/Download/DSH-Go/qqbot-src/scripts/. /root/workspace/qqbot/scripts/ 2>/dev/null; " +
                 "for f in /sdcard/Download/DSH-Go/qqbot-src/*.sh; do [ -e \"\$f\" ] && cp -a \"\$f\" /root/workspace/qqbot/; done; " +
+                "[ -f /tmp/qqbot-sync-keep/config.json ] && mv -f /tmp/qqbot-sync-keep/config.json /root/workspace/qqbot/bot/config.json 2>/dev/null; " +
+                "[ -f /tmp/qqbot-sync-keep/update-meta.json ] && mv -f /tmp/qqbot-sync-keep/update-meta.json /root/workspace/qqbot/bot/.update-meta.json 2>/dev/null; " +
+                "if [ -d /tmp/qqbot-sync-keep/data ]; then rm -rf /root/workspace/qqbot/bot/data; mv /tmp/qqbot-sync-keep/data /root/workspace/qqbot/bot/data 2>/dev/null; fi; " +
+                "rm -rf /tmp/qqbot-sync-keep 2>/dev/null; " +
+                "echo '[sync] 已保留用户配置（config.json / data / .update-meta.json）'; " +
                 "fi; " +
                 "bash scripts/admin-start.sh; ./start-all.sh; " +
                 "echo '===== qq-stderr.log ====='; tail -n 60 protocol/logs/qq-stderr.log 2>&1; " +

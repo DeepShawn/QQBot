@@ -193,6 +193,15 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
         }
 
         group("后台运行") {
+            val serviceRunning = ProotService.isRunning()
+            ArrowPreference(
+                title = "服务状态",
+                summary = if (serviceRunning) "运行中" else "已停止 · 点一下立即拉起服务",
+                onClick = {
+                    if (ProotService.isWanted(ctx)) ProotService.ensureRunning(ctx) else ProotService.start(ctx)
+                    Store.toast = "正在拉起服务，请稍候…"
+                },
+            )
             SwitchPreference(
                 title = "后台常驻（关掉 App 也继续跑）",
                 summary = "关掉界面后机器人继续运行，通知栏保留「机器人控制台」",

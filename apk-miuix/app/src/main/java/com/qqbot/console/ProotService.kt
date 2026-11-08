@@ -8,7 +8,9 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
 import android.net.wifi.WifiManager
@@ -52,12 +54,15 @@ class ProotService : Service() {
             ctx.getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(KEY_KEEP_ALIVE, on).apply()
         }
 
-        /** 保活闹钟响 / App 被划掉时调用：用户想让服务跑、环境还在、进程没了就拉起来。 */
+        /**
+         * 保活闹钟 / 「立即拉起服务」调用：用户想让服务跑、环境还在就交给 onStartCommand 处理。
+         * 不要因为 isRunning() 为 true 提前返回——进程可能已经卡死但还没退出；
+         * 真正活着时 onStartCommand 会直接返回，不会重复起 proot。
+         */
         fun ensureRunning(ctx: Context) {
             try {
                 if (!isWanted(ctx)) return
                 if (!Env.validate(ctx)) return
-                if (isRunning()) return
                 ctx.startForegroundService(Intent(ctx, ProotService::class.java))
             } catch (_: Exception) {
             }
@@ -106,6 +111,13 @@ class ProotService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var wifiLock: WifiManager.WifiLock? = null
 
+    private val handler = Handler(Looper.getMainLooper())
+    private var retryCount = 0
+    private var startedAt = 0L
+
+    /** 用户主动停止（或服务被系统销毁）后，runProot 退出不再自动重启。 */
+    @Volatile private var stopRequested = false
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -128,6 +140,9 @@ class ProotService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        stopRequested = false
+        try { handler.removeCallbacksAndMessages(null) } catch (_: Exception) {}
+        startedAt = SystemClock.elapsedRealtime()
         acquireLocks()
         Thread({ runProot() }, "proot-runner").start()
         scheduleKeepAlive(this)
@@ -177,7 +192,31 @@ class ProotService : Service() {
             Log.write("[app] $lastLog")
         } finally {
             process = null
-            notify("服务已停止")
+            // 连续跑满 60 秒才算「稳定」，重试间隔从头开始
+            if (SystemClock.elapsedRealtime() - startedAt > 60_000L) retryCount = 0
+            if (!stopRequested && isWanted(this) && keepAliveEnabled(this)) {
+                val delays = longArrayOf(5_000L, 15_000L, 60_000L, 300_000L)
+                val wait = delays[retryCount.coerceIn(0, delays.lastIndex)]
+                retryCount = (retryCount + 1).coerceAtMost(delays.lastIndex)
+                notify("进程退出，${wait / 1000} 秒后自动重启…")
+                scheduleRestart(wait)
+            } else {
+                notify("服务已停止")
+            }
+        }
+    }
+
+    /** proot 意外退出后，延迟一会儿自己再拉起来（5s → 15s → 60s → 300s）。 */
+    private fun scheduleRestart(waitMs: Long) {
+        try {
+            handler.postDelayed({
+                try {
+                    if (stopRequested || !isWanted(this) || !keepAliveEnabled(this)) return@postDelayed
+                    startForegroundService(Intent(this, ProotService::class.java))
+                } catch (_: Exception) {
+                }
+            }, waitMs)
+        } catch (_: Exception) {
         }
     }
 
@@ -197,6 +236,8 @@ class ProotService : Service() {
     }
 
     override fun onDestroy() {
+        stopRequested = true
+        try { handler.removeCallbacksAndMessages(null) } catch (_: Exception) {}
         try {
             process?.destroy()
             if (process?.waitFor(5, java.util.concurrent.TimeUnit.SECONDS) == false) {
