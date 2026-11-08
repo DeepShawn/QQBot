@@ -116,6 +116,16 @@ DEFAULTS = {
                 "prompt": "请用中文客观描述这张图片，重点提取里面的文字信息。",
             },
         },
+        "dev_tools": {
+            "enabled": True,
+            "ai_tool": True,
+            "timeout_seconds": 60,
+            "repo_path": "",
+            "git_token": "",
+        },
+        "skills": {
+            "enabled": True,
+        },
         "image_gen": {
             "enabled": True,
             "provider": "openai",

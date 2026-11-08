@@ -198,6 +198,16 @@
         "warn_text": "{at} 刷屏了，禁言 {mute_seconds} 秒。"
       },
       "recall_on_ban": true
+    },
+    "dev_tools": {
+      "enabled": true,
+      "ai_tool": true,
+      "timeout_seconds": 60,
+      "repo_path": "",
+      "git_token": ""
+    },
+    "skills": {
+      "enabled": true
     }
   },
   "ai_chat": {}

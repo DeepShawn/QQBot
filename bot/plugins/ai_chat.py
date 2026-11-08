@@ -25,6 +25,8 @@ import media
 import providers
 import pytool
 import search
+import shelltool
+import skills as skills_mod
 from dispatcher import PluginBase
 from utils import Cooldown, mentioned, strip_at, text_of, text_seg
 
@@ -72,6 +74,53 @@ IMAGE_TOOL_SPEC = {
         },
     },
 }
+
+SHELL_TOOL_NAME = "run_shell"
+SHELL_TOOL_SPEC = {
+    "type": "function",
+    "function": {
+        "name": SHELL_TOOL_NAME,
+        "description": (
+            "在手机本机的 Ubuntu/Linux 环境执行 shell 命令（可以 apt、git、跑长任务等）。"
+            "命令会真实执行，请只做用户要求的事；不要用它读取或输出密钥。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "要执行的完整 shell 命令"},
+                "timeout": {
+                    "type": "integer",
+                    "description": "超时秒数，可选，默认 60，范围 1–3600",
+                },
+            },
+            "required": ["command"],
+        },
+    },
+}
+
+SKILL_TOOL_NAME = "read_skill"
+SKILL_TOOL_SPEC = {
+    "type": "function",
+    "function": {
+        "name": SKILL_TOOL_NAME,
+        "description": (
+            "读取技能目录里某个技能的完整 Markdown 说明。"
+            "先看 system 提示里的技能列表，需要细节时再调用。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "技能名（文件名去掉 .md）"}
+            },
+            "required": ["name"],
+        },
+    },
+}
+
+LOCAL_SHELL_TOOL_HINT = (
+    "【开发者工具】你有一个 run_shell 工具：用户让你执行 shell 命令、apt/git 操作、"
+    "查看或修改本机环境、跑长任务时可以自己调用，不要把命令推回给用户。"
+)
 
 PYTHON_TOOL_NAME = "run_python"
 PYTHON_TOOL_SPEC = {
@@ -519,6 +568,53 @@ class Plugin(PluginBase):
         py_cfg = self._python_run_cfg()
         return py_cfg.get("enabled") is not False and py_cfg.get("ai_tool") is not False
 
+    def _dev_tools_cfg(self) -> dict:
+        try:
+            return self.ctx.plugin_cfg("dev_tools") or {}
+        except Exception:
+            return {}
+
+    def _skills_cfg(self) -> dict:
+        try:
+            return self.ctx.plugin_cfg("skills") or {}
+        except Exception:
+            return {}
+
+    def _shell_cwd(self):
+        repo_path = str(self._dev_tools_cfg().get("repo_path") or "").strip()
+        return repo_path or None  # None -> shelltool 用仓库根
+
+    def _shell_env_extra(self):
+        token = str(self._dev_tools_cfg().get("git_token") or "").strip()
+        if not token:
+            return None
+        # 只放进子进程 env，不写日志
+        return {"GITHUB_TOKEN": token, "GH_TOKEN": token}
+
+    def _shell_timeout(self) -> float:
+        try:
+            value = float(
+                self._dev_tools_cfg().get("timeout_seconds", shelltool.DEFAULT_TIMEOUT)
+            )
+        except (TypeError, ValueError):
+            value = shelltool.DEFAULT_TIMEOUT
+        return max(shelltool.MIN_TIMEOUT, min(shelltool.MAX_TIMEOUT, value))
+
+    def _skills_enabled(self) -> bool:
+        return self._skills_cfg().get("enabled") is not False
+
+    def _skills_list(self) -> list:
+        try:
+            return skills_mod.list_skills(self.ctx.data_dir)
+        except Exception:
+            return []
+
+    async def _shell_tool_available(self, event) -> bool:
+        cfg = self._dev_tools_cfg()
+        if cfg.get("enabled") is False or cfg.get("ai_tool") is False:
+            return False
+        return await self._can_use_tools(event)
+
     def _native_tools_supported(self, cfg: dict) -> bool:
         """当前 profile 是否能走原生 OpenAI function calling。"""
         if str(cfg.get("auth") or "").strip():
@@ -600,6 +696,65 @@ class Plugin(PluginBase):
             self.ctx.log.warning("run_python 工具执行异常: %s", e)
             result = {"error": "运行 Python 失败，稍后再试。"}
         return json.dumps(result, ensure_ascii=False)
+
+    def _execute_shell_tool(self, cfg: dict, call: dict) -> str:
+        """执行一次 run_shell 调用，返回给模型的 JSON 文本。"""
+        try:
+            arguments = json.loads(str(call.get("arguments") or "{}"))
+        except Exception:
+            return json.dumps({"error": "工具参数不是合法 JSON"}, ensure_ascii=False)
+        if not isinstance(arguments, dict):
+            return json.dumps({"error": "工具参数格式不对"}, ensure_ascii=False)
+        command = str(arguments.get("command") or "").strip()
+        if not command:
+            return json.dumps({"error": "需要 command 参数"}, ensure_ascii=False)
+        timeout = arguments.get("timeout")
+        try:
+            timeout_value = float(timeout) if timeout is not None else self._shell_timeout()
+        except (TypeError, ValueError):
+            timeout_value = self._shell_timeout()
+        try:
+            result = shelltool.run_shell(
+                command,
+                cwd=self._shell_cwd(),
+                timeout=timeout_value,
+                env_extra=self._shell_env_extra(),
+            )
+        except Exception as e:
+            self.ctx.log.warning("run_shell 工具执行异常: %s", e)
+            result = {"error": "执行 shell 失败，稍后再试。"}
+        return json.dumps(result, ensure_ascii=False)
+
+    def _execute_skill_tool(self, call: dict) -> str:
+        """执行一次 read_skill 调用，返回技能内容（截断 20KB）。"""
+        try:
+            arguments = json.loads(str(call.get("arguments") or "{}"))
+        except Exception:
+            return json.dumps({"error": "工具参数不是合法 JSON"}, ensure_ascii=False)
+        if not isinstance(arguments, dict):
+            return json.dumps({"error": "工具参数格式不对"}, ensure_ascii=False)
+        name = str(arguments.get("name") or "").strip()
+        if not name:
+            return json.dumps({"error": "需要 name 参数"}, ensure_ascii=False)
+        try:
+            content = skills_mod.read_skill(name, self.ctx.data_dir)
+        except Exception as e:
+            self.ctx.log.warning("read_skill 工具执行异常: %s", e)
+            content = None
+        if content is None:
+            return json.dumps(
+                {"error": f"没找到技能：{name}"}, ensure_ascii=False
+            )
+        limit = 20 * 1024
+        truncated = len(content) > limit
+        return json.dumps(
+            {
+                "name": name,
+                "content": content[:limit],
+                "truncated": truncated,
+            },
+            ensure_ascii=False,
+        )
 
     @staticmethod
     def _image_segment(data: bytes) -> dict:
@@ -724,6 +879,8 @@ class Plugin(PluginBase):
         prompt: str,
         image_ok: bool,
         python_ok: bool,
+        shell_ok: bool = False,
+        skills_ok: bool = False,
     ) -> str | None:
         """账号/非 OpenAI 模式的「意图路由」：一次轻量 chat 判断要不要用工具。
 
@@ -742,6 +899,16 @@ class Plugin(PluginBase):
             examples.append(
                 '· 需要运行 Python：{"tool":"run_python","code":"python 源码"} 或 '
                 '{"tool":"run_python","file":"data/files 下的 .py 文件名"}'
+            )
+        if shell_ok:
+            tools.append("run_shell（用户要执行 shell 命令/apt/git/长任务）")
+            examples.append(
+                '· 需要执行命令：{"tool":"run_shell","command":"shell 命令"}'
+            )
+        if skills_ok:
+            tools.append("read_skill（需要某个技能的完整说明）")
+            examples.append(
+                '· 需要读技能：{"tool":"read_skill","name":"技能名"}'
             )
         if not tools:
             return None
@@ -789,6 +956,24 @@ class Plugin(PluginBase):
             }
             output = await asyncio.to_thread(self._execute_python_tool, call)
             result_label = "run_python"
+        elif tool == "run_shell" and shell_ok:
+            arguments = {k: v for k, v in decision.items() if k != "tool"}
+            self.ctx.log.info("工具路由命中 run_shell")
+            call = {
+                "name": "run_shell",
+                "arguments": json.dumps(arguments, ensure_ascii=False),
+            }
+            output = await asyncio.to_thread(self._execute_shell_tool, cfg, call)
+            result_label = "run_shell"
+        elif tool == "read_skill" and skills_ok:
+            arguments = {k: v for k, v in decision.items() if k != "tool"}
+            self.ctx.log.info("工具路由命中 read_skill")
+            call = {
+                "name": "read_skill",
+                "arguments": json.dumps(arguments, ensure_ascii=False),
+            }
+            output = await asyncio.to_thread(self._execute_skill_tool, call)
+            result_label = "read_skill"
         else:
             if tool and tool != "none":
                 self.ctx.log.info("工具路由给出不可用的工具 %s，按普通聊天处理", tool)
@@ -850,6 +1035,12 @@ class Plugin(PluginBase):
                 name = str(call.get("name") or "").strip()
                 if name == IMAGE_TOOL_NAME:
                     output = await self._execute_image_tool(event, cfg, call)
+                elif name == SHELL_TOOL_NAME:
+                    output = await asyncio.to_thread(
+                        self._execute_shell_tool, cfg, call
+                    )
+                elif name == SKILL_TOOL_NAME:
+                    output = await asyncio.to_thread(self._execute_skill_tool, call)
                 else:
                     output = await asyncio.to_thread(self._execute_python_tool, call)
                 working.append(
@@ -1005,12 +1196,22 @@ class Plugin(PluginBase):
         native_supported = self._native_tools_supported(cfg)
         python_ok = self._python_tool_base_available() and await self._can_use_tools(event)
         image_ok = await self._image_tool_available(event, cfg)
+        shell_ok = await self._shell_tool_available(event)
+        skills_enabled = self._skills_enabled()
+        skills_list = self._skills_list() if skills_enabled else []
+        # 原生 tools：skills 只要没被禁用就提供 read_skill（目录为空时读会返回没找到）；
+        # 意图路由只在技能目录确实有内容时才加入 read_skill，避免无意义的多一轮路由。
+        skills_route = skills_enabled and bool(skills_list)
         tools: list = []
         if native_supported:
             if python_ok:
                 tools.append(PYTHON_TOOL_SPEC)
             if image_ok:
                 tools.append(IMAGE_TOOL_SPEC)
+            if shell_ok:
+                tools.append(SHELL_TOOL_SPEC)
+            if skills_enabled:
+                tools.append(SKILL_TOOL_SPEC)
 
         system = self.ctx.format_text(cfg.get("system_prompt", ""), event, group_id=group_id)
         hints = []
@@ -1019,6 +1220,18 @@ class Plugin(PluginBase):
             hints.append(py_hint)
         if image_ok:
             hints.append(LOCAL_IMAGE_TOOL_HINT)
+        if shell_ok:
+            hints.append(LOCAL_SHELL_TOOL_HINT)
+        if skills_list:
+            skills_text = "\n".join(
+                f"- {item.get('name')} — {item.get('description')}"
+                for item in skills_list
+            )
+            hints.append(
+                "【技能】可用技能：\n"
+                + skills_text
+                + "\n需要某个技能的完整说明时，调用 read_skill 工具。"
+            )
         if hints:
             system = (str(system).rstrip() + "\n\n" + "\n\n".join(hints)).strip()
         history_messages = self._history(key)
@@ -1059,7 +1272,9 @@ class Plugin(PluginBase):
                     # 不因此让原本能用的对话失败
                     self.ctx.log.warning("工具调用失败，退回普通聊天: %s", e)
                     answer = await asyncio.to_thread(self._sync_chat, cfg, messages)
-            elif not native_supported and (python_ok or image_ok):
+            elif not native_supported and (
+                python_ok or image_ok or shell_ok or skills_route
+            ):
                 # 账号 / 非 OpenAI 模式：用一次轻量「意图路由」让模型自己决定要不要用工具
                 routed = await self._route_tool_chat(
                     event,
@@ -1069,6 +1284,8 @@ class Plugin(PluginBase):
                     prompt,
                     image_ok,
                     python_ok,
+                    shell_ok,
+                    skills_route,
                 )
                 if routed:
                     answer = routed

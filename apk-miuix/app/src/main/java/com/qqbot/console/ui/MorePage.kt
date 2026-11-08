@@ -55,6 +55,8 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var showPython by remember { mutableStateOf(false) }
     var showKeywords by remember { mutableStateOf(false) }
     var showPlugins by remember { mutableStateOf(false) }
+    var showTasks by remember { mutableStateOf(false) }
+    var showSkills by remember { mutableStateOf(false) }
 
     // 全屏管理页：提前返回，页面自己带「返回更多」
     if (showKeywords) {
@@ -63,6 +65,14 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     }
     if (showPlugins) {
         PluginManagerPage(padding, scrollBehavior) { showPlugins = false }
+        return
+    }
+    if (showTasks) {
+        TaskManagerPage(padding, scrollBehavior) { showTasks = false }
+        return
+    }
+    if (showSkills) {
+        SkillManagerPage(padding, scrollBehavior) { showSkills = false }
         return
     }
 
@@ -312,6 +322,16 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 title = "插件管理",
                 summary = "开关各插件，配置 Python 工具（是否让 AI 自己运行 / 超时）",
                 onClick = { showPlugins = true },
+            )
+            ArrowPreference(
+                title = "任务（终端）",
+                summary = "在机器人运行环境里执行命令，看输出 / 停止",
+                onClick = { showTasks = true },
+            )
+            ArrowPreference(
+                title = "技能",
+                summary = "管理 AI 技能（Markdown 文件），可新建 / 编辑 / 删除",
+                onClick = { showSkills = true },
             )
             ArrowPreference(
                 title = "运行 Python 代码",

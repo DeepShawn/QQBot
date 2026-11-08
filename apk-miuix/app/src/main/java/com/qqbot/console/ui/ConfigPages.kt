@@ -326,6 +326,7 @@ fun PluginManagerPage(padding: PaddingValues, scrollBehavior: ScrollBehavior, on
             ConfigSwitch("画图", "消息命中触发词时生成图片", "plugins", "image_gen", "enabled", default = true)
             ConfigSwitch("联网搜索", "AI 回答前先联网搜索", "plugins", "ai_chat", "search", "enabled", default = true)
             ConfigSwitch("Python 运行", "允许 /py、/run 或代码块执行", "plugins", "python_run", "enabled", default = true)
+            ConfigSwitch("技能", "AI 技能（Markdown 文件）", "plugins", "skills", "enabled", default = true)
         }
 
         group("Python 工具") {
@@ -340,6 +341,45 @@ fun PluginManagerPage(padding: PaddingValues, scrollBehavior: ScrollBehavior, on
                         patchOf("plugins", "python_run", "timeout_seconds", value = v.coerceIn(1, 120)),
                         "超时已改为 ${v.coerceIn(1, 120)} 秒",
                     )
+                }
+            }
+        }
+
+        group("开发者工具") {
+            val devTimeout = Store.int("config", "plugins", "dev_tools", "timeout_seconds", def = 300)
+            ConfigSwitch(
+                "启用开发者工具",
+                "在运行环境里执行命令、操作仓库；AI 也可以调用",
+                "plugins", "dev_tools", "enabled", default = true,
+            )
+            ConfigSwitch(
+                "让 AI 自己决定何时使用",
+                "AI 需要跑命令或看仓库时会自己调用开发者工具",
+                "plugins", "dev_tools", "ai_tool", default = true,
+            )
+            EditPreference("任务超时（秒）", devTimeout.toString(), summary = "默认 300 秒，1–3600", numeric = true) {
+                it.toIntOrNull()?.let { v ->
+                    Store.patch(
+                        patchOf("plugins", "dev_tools", "timeout_seconds", value = v.coerceIn(1, 3600)),
+                        "超时已改为 ${v.coerceIn(1, 3600)} 秒",
+                    )
+                }
+            }
+            EditPreference(
+                "仓库路径",
+                Store.str("config", "plugins", "dev_tools", "repo_path"),
+                summary = "git 操作的默认目录，可留空",
+            ) { text ->
+                Store.patch(patchOf("plugins", "dev_tools", "repo_path", value = text.trim()))
+            }
+            EditPreference(
+                "GitHub Token",
+                Store.str("config", "plugins", "dev_tools", "git_token"),
+                summary = "用于私有仓库操作；留空不修改",
+                secret = true,
+            ) { text ->
+                if (text.isNotBlank()) {
+                    Store.patch(patchOf("plugins", "dev_tools", "git_token", value = text.trim()), "Token 已保存")
                 }
             }
         }

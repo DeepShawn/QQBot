@@ -171,6 +171,8 @@ def _make_ctx(root, ai_cfg=None, image_cfg=None, python_cfg=None, admins=()) -> 
             "python_run": python_cfg
             if python_cfg is not None
             else _python_cfg(enabled=False),
+            "dev_tools": {"enabled": False},
+            "skills": {"enabled": False},
         },
         admins=admins,
     )

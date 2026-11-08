@@ -68,8 +68,10 @@ class FakeCtx:
         self._cfg = {
             "ai_chat": dict(ai_cfg or {}),
             "python_run": dict(py_cfg) if py_cfg is not None else {},
-            # 默认关闭 image_gen，避免这些 run_python 用例被画图工具影响
+            # 默认关闭 image_gen / dev_tools / skills，避免这些 run_python 用例被其它工具影响
             "image_gen": {"enabled": False},
+            "dev_tools": {"enabled": False},
+            "skills": {"enabled": False},
         }
         self.replies: list[str] = []
 

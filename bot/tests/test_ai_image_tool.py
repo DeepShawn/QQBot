@@ -276,6 +276,8 @@ def _make_ctx(root, ai_cfg=None, image_cfg=None, python_cfg=None) -> FakeCtx:
             "ai_chat": ai_cfg if ai_cfg is not None else _ai_cfg(),
             "image_gen": image_cfg if image_cfg is not None else _image_cfg(),
             "python_run": python_cfg if python_cfg is not None else _python_cfg(enabled=False),
+            "dev_tools": {"enabled": False},
+            "skills": {"enabled": False},
         },
     )
 

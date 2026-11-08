@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -1524,6 +1525,449 @@ def api_python_run(body: dict) -> dict:
     return {"ok": False, "error": "缺少要运行的代码：在代码框里写 Python，或指定一个 .py 文件"}
 
 
+# ---------------------------------------------------------------- 任务 API（后台 shell）
+TASKS_TIMEOUT_DEFAULT = 300
+TASKS_TIMEOUT_MIN = 1
+TASKS_TIMEOUT_MAX = 3600
+TASKS_MAX_RUNNING = 3
+TASKS_KEEP = 50
+TASKS_LIST_LIMIT = 20
+TASKS_OUTPUT_LIMIT = 200 * 1024          # stdout / stderr 各截 200KB
+TASKS_COMMAND_LIMIT = 100 * 1024         # 单条命令上限 100KB
+TASKS_ALLOWED_DIRS = PYTHON_ALLOWED_DIRS  # cwd 目录白名单与 Python 运行一致
+
+_tasks_lock = threading.Lock()
+_tasks: list[dict] = []                    # 旧 -> 新，内存保存，进程重启丢失
+
+
+class TaskError(Exception):
+    """任务接口的内部异常：消息是给用户看的中文短句。"""
+
+
+def _tasks_timeout(value) -> int:
+    try:
+        n = int(value)
+    except Exception:
+        return TASKS_TIMEOUT_DEFAULT
+    return max(TASKS_TIMEOUT_MIN, min(TASKS_TIMEOUT_MAX, n))
+
+
+def _resolve_task_cwd(raw) -> Path:
+    text = str(raw or "").strip()
+    target = Path(text) if text else ROOT
+    if not target.is_absolute():
+        target = ROOT / target
+    try:
+        resolved = target.resolve(strict=True)
+    except FileNotFoundError:
+        raise TaskError("工作目录不存在") from None
+    except Exception:
+        raise TaskError("工作目录不能用") from None
+    if not resolved.is_dir():
+        raise TaskError("工作目录不是文件夹")
+    if not any(_path_within(resolved, base) for base in _python_allowed_dirs()):
+        raise TaskError("工作目录不在允许范围内")
+    return resolved
+
+
+def _new_task_id() -> str:
+    return "t%d-%s" % (int(time.time() * 1000), os.urandom(4).hex())
+
+
+def _find_task_locked(task_id: str):
+    for task in _tasks:
+        if task.get("id") == task_id:
+            return task
+    return None
+
+
+def _prune_tasks_locked() -> None:
+    while len(_tasks) > TASKS_KEEP:
+        for index, task in enumerate(_tasks):
+            if task.get("status") != "running":
+                del _tasks[index]
+                break
+        else:
+            break
+
+
+def _public_task_summary(task: dict) -> dict:
+    status = str(task.get("status") or "running")
+    duration = task.get("duration_ms") or 0
+    if status == "running":
+        try:
+            duration = int((time.time() - float(task.get("started_at") or time.time())) * 1000)
+        except Exception:
+            duration = 0
+    return {
+        "id": task.get("id"),
+        "command": task.get("command"),
+        "cwd": task.get("cwd"),
+        "status": status,
+        "started_at": task.get("started_at"),
+        "duration_ms": int(duration or 0),
+        "exit_code": task.get("exit_code"),
+        "timed_out": bool(task.get("timed_out")),
+    }
+
+
+def _public_task_detail(task: dict) -> dict:
+    out = _public_task_summary(task)
+    out["finished_at"] = task.get("finished_at") or 0
+    out["stdout"] = _decode_stream(bytes(task.get("stdout_bytes") or b""),
+                                   bool(task.get("stdout_truncated")))
+    out["stderr"] = _decode_stream(bytes(task.get("stderr_bytes") or b""),
+                                   bool(task.get("stderr_truncated")))
+    return out
+
+
+def _read_task_stream(stream, task: dict, key: str, truncated_key: str, limit: int) -> None:
+    """把任务输出增量写进 task（只留前 limit 字节），运行中也能读到当前输出。"""
+    buf = bytearray()
+    truncated = False
+    # read1 有数据就返回，read() 会等满 64KB 才返回，运行中读不到零碎输出
+    read = getattr(stream, "read1", None) or stream.read
+    try:
+        while True:
+            chunk = read(65536)
+            if not chunk:
+                break
+            if len(buf) < limit:
+                room = limit - len(buf)
+                if len(chunk) > room:
+                    buf.extend(chunk[:room])
+                    truncated = True
+                else:
+                    buf.extend(chunk)
+            else:
+                truncated = True
+            with _tasks_lock:
+                task[key] = bytes(buf)
+                task[truncated_key] = truncated
+    except Exception:
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+        with _tasks_lock:
+            task[key] = bytes(buf)
+            task[truncated_key] = truncated
+
+
+def _task_worker(task: dict, readers: list) -> None:
+    proc = task.get("proc")
+    start_mono = float(task.get("_mono") or time.monotonic())
+    timed_out = False
+    try:
+        try:
+            proc.wait(timeout=float(task.get("timeout") or TASKS_TIMEOUT_DEFAULT))
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _kill_python_process(proc)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        for reader in readers:
+            reader.join(timeout=2)
+        exit_code = proc.returncode if proc.returncode is not None else -1
+        duration_ms = int((time.monotonic() - start_mono) * 1000)
+        with _tasks_lock:
+            if task.get("stopped"):
+                task["status"] = "stopped"
+            elif timed_out or int(exit_code) != 0:
+                task["status"] = "failed"
+            else:
+                task["status"] = "done"
+            task["timed_out"] = bool(timed_out)
+            task["exit_code"] = int(exit_code)
+            task["duration_ms"] = duration_ms
+            task["finished_at"] = time.time()
+            task["proc"] = None
+            task["_mono"] = None
+    except Exception:
+        with _tasks_lock:
+            if task.get("status") == "running":
+                task["status"] = "stopped" if task.get("stopped") else "failed"
+            task["exit_code"] = task.get("exit_code") if task.get("exit_code") is not None else -1
+            task["duration_ms"] = int((time.monotonic() - start_mono) * 1000)
+            task["finished_at"] = time.time()
+            task["proc"] = None
+            task["_mono"] = None
+    finally:
+        for stream in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):
+            try:
+                stream.close()
+            except Exception:
+                pass
+
+
+def api_tasks_run(body: dict) -> dict:
+    """POST /api/tasks/run：后台线程跑 shell 命令（同时最多 3 个）。"""
+    body = body if isinstance(body, dict) else {}
+    command = body.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return {"ok": False, "error": "缺少要执行的命令"}
+    try:
+        too_long = len(command.encode("utf-8", "replace")) > TASKS_COMMAND_LIMIT
+    except Exception:
+        too_long = True
+    if too_long:
+        return {"ok": False, "error": "命令太长（上限 100KB）"}
+    timeout = _tasks_timeout(body.get("timeout"))
+    try:
+        cwd = _resolve_task_cwd(body.get("cwd"))
+    except TaskError as e:
+        return {"ok": False, "error": str(e)}
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
+    task_id = _new_task_id()
+    started_at = time.time()
+    with _tasks_lock:
+        running = sum(1 for item in _tasks if item.get("status") == "running")
+        if running >= TASKS_MAX_RUNNING:
+            return {"ok": False,
+                    "error": f"同时最多运行 {TASKS_MAX_RUNNING} 个任务，等一个结束再试"}
+        task = {
+            "id": task_id,
+            "command": command,
+            "cwd": str(cwd),
+            "timeout": timeout,
+            "status": "running",
+            "started_at": started_at,
+            "finished_at": 0.0,
+            "duration_ms": 0,
+            "exit_code": None,
+            "timed_out": False,
+            "stopped": False,
+            "stdout_bytes": b"",
+            "stderr_bytes": b"",
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "proc": None,
+            "_mono": time.monotonic(),
+        }
+        try:
+            proc = subprocess.Popen(
+                ["bash", "-lc", command],
+                cwd=str(cwd),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=False,
+                start_new_session=True,
+                env=env,
+            )
+        except Exception:
+            return {"ok": False, "error": "启动任务失败，检查运行环境"}
+        task["proc"] = proc
+        _tasks.append(task)
+        _prune_tasks_locked()
+    reader_out = threading.Thread(
+        target=_read_task_stream,
+        args=(proc.stdout, task, "stdout_bytes", "stdout_truncated", TASKS_OUTPUT_LIMIT),
+        daemon=True,
+    )
+    reader_err = threading.Thread(
+        target=_read_task_stream,
+        args=(proc.stderr, task, "stderr_bytes", "stderr_truncated", TASKS_OUTPUT_LIMIT),
+        daemon=True,
+    )
+    reader_out.start()
+    reader_err.start()
+    threading.Thread(
+        target=_task_worker,
+        args=(task, [reader_out, reader_err]),
+        daemon=True,
+        name=f"task-{task_id}",
+    ).start()
+    return {
+        "ok": True,
+        "task": {
+            "id": task["id"],
+            "command": task["command"],
+            "cwd": task["cwd"],
+            "status": "running",
+            "started_at": task["started_at"],
+        },
+    }
+
+
+def api_tasks_list() -> dict:
+    with _tasks_lock:
+        items = list(reversed(_tasks))[:TASKS_LIST_LIMIT]
+        tasks = [_public_task_summary(task) for task in items]
+    return {"ok": True, "tasks": tasks}
+
+
+def api_tasks_detail(task_id: str) -> dict:
+    task_id = str(task_id or "").strip()
+    if not task_id:
+        return {"ok": False, "error": "缺少任务 id"}
+    with _tasks_lock:
+        task = _find_task_locked(task_id)
+        snapshot = dict(task) if task is not None else None
+    if snapshot is None:
+        return {"ok": False, "error": "找不到这个任务"}
+    return {"ok": True, "task": _public_task_detail(snapshot)}
+
+
+def api_tasks_stop(body: dict) -> dict:
+    body = body if isinstance(body, dict) else {}
+    task_id = str(body.get("id") or "").strip()
+    if not task_id:
+        return {"ok": False, "error": "缺少任务 id"}
+    with _tasks_lock:
+        task = _find_task_locked(task_id)
+        if task is None:
+            return {"ok": False, "error": "找不到这个任务"}
+        if task.get("status") != "running":
+            return {"ok": True, "message": "任务已经结束"}
+        task["stopped"] = True
+        proc = task.get("proc")
+    if proc is not None:
+        _kill_python_process(proc)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------- 技能 API
+SKILLS_DIR = DATA_DIR / "skills"
+SKILLS_CONTENT_LIMIT = 200 * 1024
+SKILL_NAME_RE = re.compile(r"^[A-Za-z0-9_\-\u4e00-\u9fa5]{1,60}$")
+
+
+class SkillError(Exception):
+    """技能接口的内部异常：消息是给用户看的中文短句。"""
+
+
+def _skill_name(raw) -> str:
+    name = str(raw or "").strip()
+    if name.lower().endswith(".md"):
+        name = name[:-3].strip()
+    if not name:
+        raise SkillError("缺少技能名称")
+    if not SKILL_NAME_RE.match(name):
+        raise SkillError("技能名称只能用中文、字母、数字、下划线或短横线（1–60 个字）")
+    return name
+
+
+def _skill_file(raw) -> Path:
+    name = _skill_name(raw)
+    path = SKILLS_DIR / (name + ".md")
+    try:
+        resolved = path.resolve()
+    except Exception:
+        raise SkillError("技能路径不能用") from None
+    if not _path_within(resolved, SKILLS_DIR):
+        raise SkillError("技能路径不在允许目录里")
+    return path
+
+
+def _skill_description(text: str) -> str:
+    for line in str(text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        line = line.lstrip("#").strip()
+        if line:
+            return line[:200]
+    return ""
+
+
+def api_skills_list() -> dict:
+    skills = []
+    try:
+        if SKILLS_DIR.is_dir():
+            for path in SKILLS_DIR.glob("*.md"):
+                if not path.is_file():
+                    continue
+                name = path.stem
+                if not SKILL_NAME_RE.match(name):
+                    continue
+                try:
+                    stat = path.stat()
+                    if int(stat.st_size) > SKILLS_CONTENT_LIMIT:
+                        continue
+                    content = path.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    continue
+                skills.append({
+                    "name": name,
+                    "description": _skill_description(content),
+                    "size": int(stat.st_size),
+                    "updated_at": stat.st_mtime,
+                })
+    except Exception:
+        return {"ok": False, "error": "读取技能列表失败，请稍后再试"}
+    skills.sort(key=lambda item: item.get("name") or "")
+    return {"ok": True, "skills": skills}
+
+
+def api_skills_get(name: str) -> dict:
+    try:
+        path = _skill_file(name)
+    except SkillError as e:
+        return {"ok": False, "error": str(e)}
+    if not path.is_file():
+        return {"ok": False, "error": "找不到这个技能"}
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return {"ok": False, "error": "读取技能失败，检查文件权限"}
+    return {"ok": True, "name": path.stem, "content": content}
+
+
+def api_skills_save(body: dict) -> dict:
+    body = body if isinstance(body, dict) else {}
+    try:
+        name = _skill_name(body.get("name"))
+    except SkillError as e:
+        return {"ok": False, "error": str(e)}
+    content = body.get("content")
+    if content is None:
+        content = ""
+    if not isinstance(content, str):
+        return {"ok": False, "error": "技能内容必须是文本"}
+    try:
+        too_long = len(content.encode("utf-8", "replace")) > SKILLS_CONTENT_LIMIT
+    except Exception:
+        too_long = True
+    if too_long:
+        return {"ok": False, "error": "技能内容太长（上限 200KB）"}
+    path = _skill_file(name)
+    tmp = SKILLS_DIR / (".%s.%d.tmp" % (name, os.getpid()))
+    try:
+        SKILLS_DIR.mkdir(parents=True, exist_ok=True)
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+        return {"ok": False, "error": "保存技能失败，检查磁盘空间和权限"}
+    return {"ok": True, "name": name}
+
+
+def api_skills_delete(body: dict) -> dict:
+    body = body if isinstance(body, dict) else {}
+    try:
+        name = _skill_name(body.get("name"))
+    except SkillError as e:
+        return {"ok": False, "error": str(e)}
+    path = _skill_file(name)
+    if not path.is_file():
+        return {"ok": False, "error": "找不到这个技能"}
+    try:
+        path.unlink()
+    except Exception:
+        return {"ok": False, "error": "删除技能失败，检查文件权限"}
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------- HTTP
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -1593,6 +2037,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_api_safe(api_update_check, "检查更新失败，请稍后再试"))
             if path == "/api/update/bot/status":
                 return self._json(_api_safe(api_update_status, "读取更新状态失败，请稍后再试"))
+            if path == "/api/tasks":
+                return self._json(_api_safe(api_tasks_list, "读取任务列表失败，请稍后再试"))
+            if path == "/api/tasks/detail":
+                task_id = (qs.get("id") or [""])[0]
+                return self._json(_api_safe(lambda: api_tasks_detail(task_id),
+                                            "读取任务详情失败，请稍后再试"))
+            if path == "/api/skills":
+                return self._json(_api_safe(api_skills_list, "读取技能列表失败，请稍后再试"))
+            if path == "/api/skills/get":
+                skill_name = (qs.get("name") or [""])[0]
+                return self._json(_api_safe(lambda: api_skills_get(skill_name),
+                                            "读取技能失败，请稍后再试"))
             if path == "/api/state":
                 return self._json(build_state())
             if path == "/api/context":
@@ -1670,6 +2126,18 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/python/run":
                 return self._json(_api_safe(lambda: api_python_run(body),
                                             "运行 Python 失败，请稍后再试"))
+            if path == "/api/tasks/run":
+                return self._json(_api_safe(lambda: api_tasks_run(body),
+                                            "启动任务失败，请稍后再试"))
+            if path == "/api/tasks/stop":
+                return self._json(_api_safe(lambda: api_tasks_stop(body),
+                                            "停止任务失败，请稍后再试"))
+            if path == "/api/skills/save":
+                return self._json(_api_safe(lambda: api_skills_save(body),
+                                            "保存技能失败，请稍后再试"))
+            if path == "/api/skills/delete":
+                return self._json(_api_safe(lambda: api_skills_delete(body),
+                                            "删除技能失败，请稍后再试"))
             return self._error("not found", 404)
         except subprocess.TimeoutExpired:
             return self._error("操作超时（脚本仍可能在后台继续执行，稍后刷新看状态）", 500)
