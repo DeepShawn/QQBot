@@ -18,17 +18,26 @@ SELF_ID = 999
 
 
 class FakeLog:
-    def info(self, *args, **kwargs):
-        pass
+    def __init__(self):
+        self.records: list[str] = []
 
-    def warning(self, *args, **kwargs):
-        pass
+    def _record(self, msg, args):
+        try:
+            self.records.append(str(msg) % args if args else str(msg))
+        except Exception:
+            self.records.append(str(msg))
 
-    def error(self, *args, **kwargs):
-        pass
+    def info(self, msg, *args, **kwargs):
+        self._record(msg, args)
 
-    def exception(self, *args, **kwargs):
-        pass
+    def warning(self, msg, *args, **kwargs):
+        self._record(msg, args)
+
+    def error(self, msg, *args, **kwargs):
+        self._record(msg, args)
+
+    def exception(self, msg, *args, **kwargs):
+        self._record(msg, args)
 
 
 class FakeApi:
@@ -71,6 +80,9 @@ class FakeCtx:
     async def reply(self, event, message, at: bool = False):
         self.replies.append(python_run._message_text(message))
         return {"message_id": len(self.replies)}
+
+    def format_text(self, template, event, **extra):
+        return str(template or "")
 
 
 class PluginTestCase(unittest.IsolatedAsyncioTestCase):
@@ -522,6 +534,234 @@ class TriggerTests(PluginTestCase):
         self.set_cfg(enabled=False)
         handled = await self.run_plugin(self.event('/py print("x")', private=True))
         self.assertFalse(handled)
+
+
+class TryTriggerTests(PluginTestCase):
+    async def test_try_runs_recent_file(self):
+        self.write_file("recent.py", "print('recent ok')")
+        handled = await self.run_plugin(self.event("你再试试", private=True))
+        self.assertTrue(handled)
+        self.assertEqual(len(self.ctx.replies), 2)
+        self.assertIn("运行最近的代码文件：recent.py", self.ctx.replies[0])
+        self.assertIn("recent ok", self.ctx.replies[1])
+
+    async def test_try_runs_newest_file(self):
+        self.write_file("older.py", "print('older ran')")
+        newest = self.write_file("newest.py", "print('newest ran')")
+        import os
+
+        now = time.time()
+        os.utime(self.files / "older.py", (now - 120, now - 120))
+        os.utime(newest, (now, now))
+        handled = await self.run_plugin(self.event("跑一下", private=True))
+        self.assertTrue(handled)
+        self.assertIn("newest.py", self.ctx.replies[0])
+        self.assertIn("newest ran", self.ctx.replies[-1])
+
+    async def test_try_without_recent_file_does_not_run(self):
+        old_file = self.write_file("old.py", "print('old ran')")
+        old_time = time.time() - 3600
+        import os
+
+        os.utime(old_file, (old_time, old_time))
+        handled = await self.run_plugin(self.event("再试试", private=True))
+        self.assertFalse(handled)
+        self.assertEqual(self.ctx.replies, [])
+
+    async def test_try_without_any_file_does_not_run(self):
+        handled = await self.run_plugin(self.event("试试看", private=True))
+        self.assertFalse(handled)
+        self.assertEqual(self.ctx.replies, [])
+
+    async def test_try_group_without_mention_ignored(self):
+        self.write_file("recent.py", "print('nope')")
+        handled = await self.run_plugin(self.event("再试试", user_id=20002))
+        self.assertFalse(handled)
+
+    async def test_try_group_owner_runs_recent(self):
+        self.write_file("recent.py", "print('group try ok')")
+        self.ctx.api.member = {"role": "owner"}
+        handled = await self.run_plugin(
+            self.event("你再试试", mention=True, user_id=20002)
+        )
+        self.assertTrue(handled)
+        self.assertIn("运行最近的代码文件", self.ctx.replies[0])
+        self.assertIn("group try ok", self.ctx.replies[-1])
+
+    async def test_try_group_non_admin_denied(self):
+        self.write_file("recent.py", "print('nope')")
+        self.ctx.api.member = {"role": "member"}
+        handled = await self.run_plugin(
+            self.event("你再试试", mention=True, user_id=20002)
+        )
+        self.assertTrue(handled)
+        self.assertEqual(self.last_reply(), python_run.PERMISSION_TEXT)
+        self.assertEqual(len(self.ctx.replies), 1)
+
+    async def test_all_try_words_trigger(self):
+        for word in (
+            "再试试",
+            "试试",
+            "试一下",
+            "试下",
+            "试一次",
+            "跑一下",
+            "跑下",
+            "运行一下",
+            "执行一下",
+        ):
+            with self.subTest(word=word):
+                self.write_file("recent.py", "print('ok')")
+                self.ctx.replies.clear()
+                handled = await self.run_plugin(self.event(word, private=True))
+                self.assertTrue(handled, word)
+                self.assertIn("运行最近的代码文件", self.ctx.replies[0], word)
+
+
+class QuotedFilenameTests(PluginTestCase):
+    SAVED_NAME = "代码_1108_120000.py"
+
+    def _quoted_text(self, text: str):
+        self.ctx.api.quoted = {"message": [{"type": "text", "data": {"text": text}}]}
+
+    async def test_quoted_text_filename_runs(self):
+        self.write_file(self.SAVED_NAME, "print('quoted filename ok')")
+        self._quoted_text(f"📎 完整代码已保存成文件发出：{self.SAVED_NAME}")
+        handled = await self.run_plugin(self.event("运行", private=True, reply_id=1))
+        self.assertTrue(handled)
+        self.assertIn("quoted filename ok", self.last_reply())
+
+    async def test_quoted_text_filename_with_try_trigger(self):
+        self.write_file(self.SAVED_NAME, "print('try quoted ok')")
+        self._quoted_text(f"📎 完整代码已保存成文件发出：{self.SAVED_NAME}")
+        handled = await self.run_plugin(self.event("你再试试", private=True, reply_id=1))
+        self.assertTrue(handled)
+        self.assertIn("try quoted ok", self.last_reply())
+
+    async def test_run_command_with_quoted_filename(self):
+        self.write_file(self.SAVED_NAME, "print('run quoted ok')")
+        self._quoted_text(f"文件：{self.SAVED_NAME}")
+        handled = await self.run_plugin(self.event("/run", private=True, reply_id=1))
+        self.assertTrue(handled)
+        self.assertIn("run quoted ok", self.last_reply())
+
+    async def test_group_quoted_filename_without_mention_executes(self):
+        self.write_file(self.SAVED_NAME, "print('group quoted ok')")
+        self._quoted_text(f"文件：{self.SAVED_NAME}")
+        self.ctx.api.member = {"role": "owner"}
+        handled = await self.run_plugin(
+            self.event("运行", reply_id=1, user_id=20002)
+        )
+        self.assertTrue(handled)
+        self.assertIn("group quoted ok", self.last_reply())
+
+    async def test_group_quoted_filename_non_admin_denied(self):
+        self.write_file(self.SAVED_NAME, "print('nope')")
+        self._quoted_text(f"文件：{self.SAVED_NAME}")
+        self.ctx.api.member = {"role": "member"}
+        handled = await self.run_plugin(
+            self.event("运行", reply_id=1, user_id=20002)
+        )
+        self.assertTrue(handled)
+        self.assertEqual(self.last_reply(), python_run.PERMISSION_TEXT)
+
+    async def test_quoted_filename_not_existing_ignored(self):
+        self._quoted_text("看这个 not_exists.py 吧")
+        handled = await self.run_plugin(self.event("运行", private=True, reply_id=1))
+        self.assertFalse(handled)
+
+    async def test_init_logs_loaded(self):
+        self.assertTrue(
+            any("python_run 已加载" in item for item in self.ctx.log.records)
+        )
+        self.assertTrue(
+            any("/py" in item and "/run" in item for item in self.ctx.log.records)
+        )
+
+
+class AiChatPromptHintTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.ctx = FakeCtx(self._tmp.name)
+
+    def test_hint_when_python_run_enabled(self):
+        from plugins import ai_chat
+
+        hint = ai_chat.local_python_hint(self.ctx)
+        self.assertIn("本地 Python", hint)
+        self.assertIn("/py", hint)
+        self.assertIn("没有工具", hint)
+
+    def test_hint_empty_when_disabled(self):
+        from plugins import ai_chat
+
+        self.ctx._cfg["python_run"] = {"enabled": False}
+        self.assertEqual(ai_chat.local_python_hint(self.ctx), "")
+
+
+class AiChatPromptIntegrationTests(PluginTestCase):
+    async def test_system_prompt_contains_local_python_hint(self):
+        from plugins import ai_chat
+
+        self.ctx._cfg["ai_chat"] = {
+            "enabled": True,
+            "provider": "openai",
+            "base_url": "",
+            "api_key": "key",
+            "model": "m",
+            "temperature": 0.7,
+            "max_tokens": 100,
+            "timeout_seconds": 10,
+            "system_prompt": "你是助手",
+            "trigger": {"private": True},
+        }
+        plugin = ai_chat.Plugin(self.ctx)
+        captured: dict = {}
+        original = ai_chat.providers.chat
+
+        def fake_chat(**kwargs):
+            captured.update(kwargs)
+            return "好的"
+
+        ai_chat.providers.chat = fake_chat
+        self.addCleanup(setattr, ai_chat.providers, "chat", original)
+        handled = await plugin.on_event(self.event("再试试", private=True))
+        self.assertTrue(handled)
+        system = captured["messages"][0]
+        self.assertEqual(system["role"], "system")
+        self.assertIn("你是助手", system["content"])
+        self.assertIn("本地 Python", system["content"])
+
+    async def test_system_prompt_without_hint_when_disabled(self):
+        from plugins import ai_chat
+
+        self.ctx._cfg["python_run"] = {"enabled": False}
+        self.ctx._cfg["ai_chat"] = {
+            "enabled": True,
+            "provider": "openai",
+            "base_url": "",
+            "api_key": "key",
+            "model": "m",
+            "temperature": 0.7,
+            "max_tokens": 100,
+            "timeout_seconds": 10,
+            "system_prompt": "你是助手",
+            "trigger": {"private": True},
+        }
+        plugin = ai_chat.Plugin(self.ctx)
+        captured: dict = {}
+        original = ai_chat.providers.chat
+
+        def fake_chat(**kwargs):
+            captured.update(kwargs)
+            return "好的"
+
+        ai_chat.providers.chat = fake_chat
+        self.addCleanup(setattr, ai_chat.providers, "chat", original)
+        handled = await plugin.on_event(self.event("你好", private=True))
+        self.assertTrue(handled)
+        self.assertEqual(captured["messages"][0]["content"], "你是助手")
 
 
 class HelperTests(unittest.TestCase):

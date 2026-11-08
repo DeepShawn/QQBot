@@ -26,6 +26,24 @@ from utils import Cooldown, mentioned, strip_at, text_of, text_seg
 
 _MD_RE = re.compile(r"\*\*|__|`{1,3}|^#{1,6}\s*", re.M)
 
+# python_run 插件没被禁用时追加到 system prompt：避免 AI 说「没有工具/跑不了」
+LOCAL_PYTHON_HINT = (
+    "【本地 Python】机器人可以在手机运行环境里执行 Python：用户发 /py <代码>、"
+    "/run <文件名>，或引用 .py 文件/代码块说「运行」。你自己不能直接执行代码；"
+    "用户让你运行代码时，请让对方发「运行」或 /py，不要说“没有工具/跑不了”。"
+)
+
+
+def local_python_hint(ctx) -> str:
+    """python_run 插件启用时返回本地 Python 能力提示，否则返回空串。"""
+    try:
+        cfg = ctx.plugin_cfg("python_run") or {}
+    except Exception:
+        cfg = {}
+    if cfg.get("enabled") is False:
+        return ""
+    return LOCAL_PYTHON_HINT
+
 
 class Plugin(PluginBase):
     name = "ai_chat"
@@ -493,6 +511,9 @@ class Plugin(PluginBase):
             return False
 
         system = self.ctx.format_text(cfg.get("system_prompt", ""), event, group_id=group_id)
+        hint = local_python_hint(self.ctx)
+        if hint:
+            system = (str(system).rstrip() + "\n\n" + hint).strip()
         messages = [{"role": "system", "content": system}]
         messages += self._history(key)
 

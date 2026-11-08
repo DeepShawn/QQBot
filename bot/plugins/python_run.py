@@ -10,6 +10,10 @@
 - 自然语言：消息里有「运行/执行/跑/run」，并且引用了 .py 文件 / python 代码块，
   或提到 data/files 下存在的 .py 文件名，就直接执行；只提到 python/代码 时回复
   用法提示（不再交给 AI 瞎答）。
+- 追问式触发：「再试试 / 试试 / 试一下 / 跑一下 / 运行一下」这类消息在没有明确
+  目标时，自动运行 data/files 里最近 30 分钟内改过的 .py，并先回一句文件名。
+- 引用消息的纯文本里出现 xxx.py 文件名（比如机器人之前发的「已保存成文件：代码_x.py」）
+  也会解析出来并运行；群聊里这种引用不需要 @ 机器人。
 
 执行方式：``sys.executable -I -u`` 跑临时脚本，30 秒超时，输出截断；只使用标准库。
 安全：只运行用户明确给出/引用的 Python 代码，不拼接 shell；临时脚本结束即删；
@@ -58,7 +62,13 @@ _PY_LANGS = ("python", "python3", "py", "py3")
 _CMD_PY_RE = re.compile(r"^/(?:py|python)\b\s*(.*)$", re.I | re.S)
 _CMD_RUN_RE = re.compile(r"^/run\b\s*(.*)$", re.I | re.S)
 _NL_RUN_RE = re.compile(r"运行|执行|跑|(?<![A-Za-z])run(?![A-Za-z])", re.I)
+_TRY_RE = re.compile(
+    r"再试|试试|试一下|试下|试一次|跑一下|跑下|运行一下|执行一下", re.I
+)
 _PY_WORD_RE = re.compile(r"python|(?<![A-Za-z])py(?![A-Za-z])|\.py|代码", re.I)
+# 文本里 xxx.py 文件名的粗略抓取（再和 data/files 里的真实文件名对照）
+_PY_NAME_RE = re.compile(r"[\w./\\-]+\.py", re.UNICODE)
+RECENT_WINDOW_SECONDS = 30 * 60
 
 
 # ---------------------------------------------------------------- 小工具
@@ -122,6 +132,10 @@ class Plugin(PluginBase):
         self.data_dir = Path(ctx.data_dir)
         self.files_dir = self.data_dir / FILES_DIR_NAME
         self.run_dir = self.data_dir / RUN_DIR_NAME
+        try:
+            self.ctx.log.info("python_run 已加载（/py、/run）")
+        except Exception:
+            pass
 
     # ---------------- 配置 ----------------
     def _cfg(self) -> dict:
@@ -268,6 +282,44 @@ class Plugin(PluginBase):
         if contained:
             return contained[0], ""
         return None, f"没找到 {raw} 这个 .py 文件。可以发文件后 /run 文件名，或直接 /py 贴代码。"
+
+    def _recent_py_file(self) -> Path | None:
+        """data/files 下最近 30 分钟内修改过的 .py（取最新一个）。"""
+        now = time.time()
+        best: tuple[float, Path] | None = None
+        for path in self._iter_py_files():
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if now - mtime > RECENT_WINDOW_SECONDS:
+                continue
+            if best is None or mtime > best[0]:
+                best = (mtime, path)
+        return best[1] if best is not None else None
+
+    def _quoted_filename(self, quoted) -> Path | None:
+        """引用消息的纯文本里出现 xxx.py 文件名 -> data/files 里解析出路径。"""
+        text = self._quoted_text(quoted)
+        if not text:
+            return None
+        # 1) 先和 data/files 里的真实文件名对照（机器人自己发的保存提示最常见）
+        best: Path | None = None
+        for path in self._iter_py_files():
+            if path.name and path.name in text:
+                if best is None or len(path.name) > len(best.name):
+                    best = path
+        if best is not None:
+            return best
+        # 2) 再从文本里抓 xxx.py 片段，交给 /run 的查找逻辑
+        for match in _PY_NAME_RE.finditer(text):
+            raw = match.group(0).strip("./\\").strip()
+            if not raw:
+                continue
+            path, _error = self._resolve_run_arg(raw)
+            if path is not None:
+                return path
+        return None
 
     def _find_file_in_text(self, text: str) -> Path | None:
         """自然语言里提到 data/files 下已有的 .py 文件名 -> 路径。"""
@@ -505,6 +557,11 @@ class Plugin(PluginBase):
         if not await self._allowed(event):
             await self._reply(event, PERMISSION_TEXT)
             return
+        if kind == "recent":
+            path = action[1]
+            await self._reply(event, f"运行最近的代码文件：{Path(path).name}")
+            await self._run_file(event, path)
+            return
         if kind == "code":
             await self._run_code(event, str(action[1]))
         elif kind == "file":
@@ -539,7 +596,19 @@ class Plugin(PluginBase):
             return False
         quoted = await self._quoted(event) if has_reply else None
         quoted_action = self._quoted_action(quoted)
-        if is_group and not addressed and quoted_action is None and not command:
+        quoted_path = (
+            self._quoted_filename(quoted)
+            if quoted is not None and quoted_action is None
+            else None
+        )
+        # 群聊：引用消息里能解析到 .py 文件名（或代码/文件）也算可处理，不强制 @
+        if (
+            is_group
+            and not addressed
+            and quoted_action is None
+            and quoted_path is None
+            and not command
+        ):
             return False
 
         if command == "py":
@@ -554,6 +623,9 @@ class Plugin(PluginBase):
             if quoted_action is not None and quoted_action[0] == "file_seg":
                 await self._handle_action(event, quoted_action)
                 return True
+            if quoted_path is not None:
+                await self._handle_action(event, ("file", quoted_path))
+                return True
             await self._reply(event, USAGE_TEXT)
             return True
 
@@ -567,19 +639,31 @@ class Plugin(PluginBase):
             if quoted_action is not None:
                 await self._handle_action(event, quoted_action)
                 return True
+            if quoted_path is not None:
+                await self._handle_action(event, ("file", quoted_path))
+                return True
             await self._reply(event, USAGE_TEXT)
             return True
 
-        # 自然语言：要有「运行/执行/跑/run」
-        if not _NL_RUN_RE.search(text):
+        # 自然语言：「运行/执行/跑/run」或「再试试/跑一下」这类追问
+        if not (_NL_RUN_RE.search(text) or _TRY_RE.search(text)):
             return False
         if quoted_action is not None:
             await self._handle_action(event, quoted_action)
+            return True
+        if quoted_path is not None:
+            await self._handle_action(event, ("file", quoted_path))
             return True
         path = self._find_file_in_text(text)
         if path is not None:
             await self._handle_action(event, ("file", path))
             return True
+        # 没有明确目标时，「再试试/跑一下」自动跑最近 30 分钟内的 .py
+        if _TRY_RE.search(text):
+            recent = self._recent_py_file()
+            if recent is not None:
+                await self._handle_action(event, ("recent", recent))
+                return True
         # 只提到 python/py/代码：给用法提示，不再让 AI 瞎答
         if _PY_WORD_RE.search(text):
             await self._reply(event, USAGE_TEXT)
