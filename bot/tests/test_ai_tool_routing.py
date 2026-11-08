@@ -314,11 +314,13 @@ class IntentRoutingTests(RoutingTestCase):
 
     async def test_route_generate_image_executes_and_replies(self):
         self._account_ctx()
+        long_prompt = "一只毛茸茸的橘猫坐在窗台上，水彩风格，暖色阳光，竖构图"
         self.install_chat(
             [
                 '好的，判断如下：\n```json\n'
-                '{"tool":"generate_image","prompt":"一只橘猫","size":"1024x1792"}\n'
-                "```",
+                '{"tool":"generate_image","prompt":"'
+                + long_prompt
+                + '","size":"1024x1792"}\n```',
                 "画好啦",
             ]
         )
@@ -327,8 +329,9 @@ class IntentRoutingTests(RoutingTestCase):
         self.assertTrue(handled)
         self.assertEqual(len(self.image_calls), 1)
         args, _ = self.image_calls[0]
-        self.assertEqual(args[2], "一只橘猫")  # prompt
+        self.assertEqual(args[2], long_prompt)  # 模型自己写的 prompt，未被改写
         self.assertEqual(args[3], "1024x1792")  # size
+        self.assertEqual(len(self.chat_calls), 2)  # 路由 + 最终回复，无额外改写
         self.assertEqual(len(self.ctx.sent), 1)
         self.assertEqual(self.ctx.sent[0]["target"], "private")
         segments = self.ctx.sent[0]["message"]
@@ -395,6 +398,7 @@ class IntentRoutingTests(RoutingTestCase):
         self.install_chat(
             [
                 '{"tool":"generate_image","prompt":"猫"}',
+                "一只猫，水彩风格，暖色阳光，简洁背景",
                 "画图失败了",
             ]
         )

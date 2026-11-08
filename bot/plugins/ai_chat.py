@@ -58,12 +58,16 @@ IMAGE_TOOL_SPEC = {
         "name": IMAGE_TOOL_NAME,
         "description": (
             "用户要画图/生成图片/来一张图时调用；不要用代码画图（也不要写 SVG 画图代码），"
-            "直接生成图片发出去。"
+            "直接生成图片发出去。prompt 必须由你自己根据用户需求写一段高质量生图提示词"
+            "（主体、风格、构图、光线、画幅等），不要只复述用户原话。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "prompt": {"type": "string", "description": "画面描述"},
+                "prompt": {
+                    "type": "string",
+                    "description": "你自己写好的高质量生图提示词（不是照抄用户原话）",
+                },
                 "size": {
                     "type": "string",
                     "enum": list(IMAGE_SIZES),
@@ -147,8 +151,18 @@ MAX_TOOL_ROUNDS = 3
 ROUTE_MAX_HISTORY = 6
 ROUTE_MAX_TOKENS = 300
 
+IMAGE_PROMPT_REWRITE_SYSTEM = (
+    "你是生图提示词改写助手。根据用户需求写一句具体的中文生图提示词，"
+    "包含主体、风格、构图、光线、画幅等细节；只输出提示词本身，"
+    "不要解释、不要加引号或代码块、不要照抄用户原话。"
+)
+IMAGE_PROMPT_FALLBACK_REPLY = "画好了，图在下面～"
+
 ROUTE_SYSTEM_HEAD = (
-    "你是工具路由器。只判断用户这句话是否需要用工具，不要回答用户问题，不要解释。\n"
+    "你是工具路由器。先分析用户需求，再从可用工具里选择 0 或 1 个；"
+    "不要回答用户问题，不要解释。\n"
+    "如果选择 generate_image，prompt 字段必须是你自己根据需求写好的具体生图提示词"
+    "（包含主体、风格、构图、光线、画幅等），不要照抄用户原话。\n"
     "可用工具：\n"
 )
 ROUTE_SYSTEM_FORMAT = (
@@ -830,13 +844,24 @@ class Plugin(PluginBase):
             )
         self.ctx.log.info("AI 画图完成 %d 张: %s", len(segments), prompt[:40])
         return json.dumps(
-            {"ok": True, "count": len(segments), "note": "图片已发送"},
+            {
+                "ok": True,
+                "count": len(segments),
+                "prompt": prompt,
+                "note": "图片已发送",
+            },
             ensure_ascii=False,
         )
 
     # ---------------- 账号/非 OpenAI 模式的意图路由 ----------------
-    def _sync_route_chat(self, cfg: dict, messages: list) -> str:
-        """工具路由用的轻量模型调用：temperature=0、max_tokens≈300。"""
+    def _sync_route_chat(
+        self,
+        cfg: dict,
+        messages: list,
+        temperature: float = 0.0,
+        max_tokens: int = ROUTE_MAX_TOKENS,
+    ) -> str:
+        """轻量模型调用：工具路由默认 temperature=0，改写提示词时用 0.7。"""
         auth = str(cfg.get("auth") or "").strip()
         model = str(cfg.get("model") or "").strip()
         if not model and not auth:
@@ -847,8 +872,8 @@ class Plugin(PluginBase):
             api_key=str(cfg.get("api_key", "")),
             model=model,
             messages=messages,
-            temperature=0.0,
-            max_tokens=ROUTE_MAX_TOKENS,
+            temperature=float(temperature),
+            max_tokens=int(max_tokens),
             timeout=float(cfg.get("timeout_seconds", 60)),
             auth=auth,
         )
@@ -870,6 +895,41 @@ class Plugin(PluginBase):
                 return value
             index = raw.find("{", index + 1)
         return None
+
+    @staticmethod
+    def _image_prompt_weak(candidate: str, user_text: str) -> bool:
+        """路由给的生图 prompt 是否太敷衍：空/过短/基本复述用户原话。"""
+        text = str(candidate or "").strip()
+        original = str(user_text or "").strip()
+        if len(text) < 4:
+            return True
+        if not original:
+            return False
+        if text == original:
+            return True
+        return text in original or original in text
+
+    async def _rewrite_image_prompt(self, cfg: dict, user_text: str) -> str:
+        """让主模型把用户需求改写成一句具体生图提示词；失败返回空串。"""
+        messages = [
+            {"role": "system", "content": IMAGE_PROMPT_REWRITE_SYSTEM},
+            {"role": "user", "content": str(user_text or "").strip()},
+        ]
+        try:
+            raw = await asyncio.to_thread(
+                self._sync_route_chat, cfg, messages, 0.7, 300
+            )
+        except providers.ProviderError as e:
+            self.ctx.log.info("生图提示词改写失败，退回用户原话: %s", e)
+            return ""
+        text = str(raw or "").strip()
+        # 容忍模型偶尔加代码块/引号
+        text = re.sub(r"^```[A-Za-z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+        text = text.strip("\"'“”「」").strip()
+        if len(text) < 4:
+            return ""
+        return text[:400]
 
     async def _route_tool_chat(
         self,
@@ -893,7 +953,7 @@ class Plugin(PluginBase):
             tools.append("generate_image（用户要画图/生成图片）")
             examples.append(
                 '· 需要画图：{"tool":"generate_image",'
-                '"prompt":"画面描述","size":"1024x1024"}'
+                '"prompt":"你自己写的具体生图提示词","size":"1024x1024"}'
             )
         if python_ok:
             tools.append("run_python（用户要运行代码/脚本）")
@@ -945,6 +1005,21 @@ class Plugin(PluginBase):
         )
         if tool == "generate_image" and image_ok:
             arguments = {k: v for k, v in decision.items() if k != "tool"}
+            route_prompt = str(arguments.get("prompt") or "").strip()
+            image_prompt = route_prompt
+            if self._image_prompt_weak(route_prompt, prompt):
+                # 路由只是复述/太短：让主模型自己写一版具体生图提示词
+                rewritten = await self._rewrite_image_prompt(cfg, prompt)
+                if rewritten:
+                    image_prompt = rewritten
+                elif str(prompt or "").strip():
+                    image_prompt = str(prompt).strip()
+                self.ctx.log.info(
+                    "生图提示词已改写: %r -> %r",
+                    route_prompt[:30],
+                    image_prompt[:40],
+                )
+            arguments["prompt"] = image_prompt
             self.ctx.log.info("工具路由命中 generate_image")
             output = await self._perform_image_tool(event, cfg, arguments)
             result_label = "generate_image"
@@ -979,28 +1054,41 @@ class Plugin(PluginBase):
             if tool and tool != "none":
                 self.ctx.log.info("工具路由给出不可用的工具 %s，按普通聊天处理", tool)
             return None
+        if result_label == "generate_image":
+            instruction = (
+                f"【工具执行结果】generate_image：{output}\n"
+                "图片已发送。请用简短中文告诉用户画好了，并用一两句描述画面；"
+                "不要重复提示词原文，也不要说自己不能画图。"
+            )
+        else:
+            instruction = (
+                f"【工具执行结果】{result_label}：{output}\n"
+                "请根据以上结果用中文回复用户；不要再重复发送图片，"
+                "也不要说自己不能运行工具。"
+            )
         final_messages = list(messages) + [
-            {
-                "role": "system",
-                "content": (
-                    f"【工具执行结果】{result_label}：{output}\n"
-                    "请根据以上结果用中文回复用户；不要再重复发送图片，"
-                    "也不要说自己不能运行工具。"
-                ),
-            }
+            {"role": "system", "content": instruction}
         ]
         try:
             final = await asyncio.to_thread(self._sync_chat, cfg, final_messages)
         except providers.ProviderError as e:
+            if result_label == "generate_image":
+                self.ctx.log.info("画图后的最终回复失败，用兜底文案: %s", e)
+                return IMAGE_PROMPT_FALLBACK_REPLY
             self.ctx.log.info("工具结果后的最终回复失败，按普通聊天处理: %s", e)
             return None
         text = str(final or "").strip()
-        return text or None
+        if text:
+            return text
+        if result_label == "generate_image":
+            return IMAGE_PROMPT_FALLBACK_REPLY
+        return None
 
     async def _tool_chat(self, event, cfg: dict, messages: list, tools: list) -> str:
         """最多 3 轮工具循环：tool_calls -> 执行 -> role=tool 结果回给模型。"""
         working = [dict(item) for item in messages]
         last_content = ""
+        had_image_result = False
         for round_index in range(MAX_TOOL_ROUNDS):
             result = await asyncio.to_thread(
                 self._sync_chat_with_tools, cfg, working, tools
@@ -1010,6 +1098,8 @@ class Plugin(PluginBase):
             if content:
                 last_content = content
             if not calls:
+                if not content and had_image_result:
+                    return IMAGE_PROMPT_FALLBACK_REPLY
                 return content
             assistant_calls = []
             for index, call in enumerate(calls):
@@ -1036,6 +1126,12 @@ class Plugin(PluginBase):
                 name = str(call.get("name") or "").strip()
                 if name == IMAGE_TOOL_NAME:
                     output = await self._execute_image_tool(event, cfg, call)
+                    try:
+                        parsed = json.loads(output)
+                    except Exception:
+                        parsed = None
+                    if isinstance(parsed, dict) and parsed.get("ok"):
+                        had_image_result = True
                 elif name == SHELL_TOOL_NAME:
                     output = await asyncio.to_thread(
                         self._execute_shell_tool, cfg, call
@@ -1051,7 +1147,10 @@ class Plugin(PluginBase):
         final = await asyncio.to_thread(
             self._sync_chat_with_tools, cfg, working, None
         )
-        return str(final.get("content") or "").strip() or last_content
+        text = str(final.get("content") or "").strip() or last_content
+        if not text and had_image_result:
+            return IMAGE_PROMPT_FALLBACK_REPLY
+        return text
 
     @staticmethod
     def _wants_file(prompt: str, blocks: list, cfg: dict) -> bool:

@@ -220,7 +220,7 @@ tail -f protocol/logs/*.log       # NapCat / QQ
 
 ### 6) 画图 / 识图（支持账号）
 
-- **画图**：默认由 AI 自己判断（你说「画个猫 / 来一张……」），模型调用 `generate_image` 工具。
+- **画图**：默认由 AI 自己判断（你说「画个猫 / 来一张……」），模型调用 `generate_image` 工具，并**自己写生图提示词**（主体/风格/构图/光线）交给画图模型；图片发出后由主对话模型用一两句话回复你。
   画图账号与主对话账号**相互独立**：主对话可以用 Claude，画图单独选「ChatGPT 账号」（`image_gen.auth=chatgpt`，模型 gpt-image-2），
   或者单独填图片 API Key（base_url 留空 = OpenAI 官方）。显式触发词（画一张 / 画个 / 生成图片…）仍然生效。
   ⚠️ 旧行为「复用主对话的 Key/接口」默认关闭（`follow_ai=false`）；不会再拿 DeepSeek 的地址去拼图片接口（之前 404 的原因）。
