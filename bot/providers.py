@@ -8,7 +8,7 @@
     ProviderError
     normalize_provider(name) -> str
     chat(*, provider, base_url, api_key, model, messages,
-         temperature=0.7, max_tokens=600, timeout=60.0) -> str
+         temperature=0.7, max_tokens=600, timeout=60.0, auth="") -> str
     describe_images(*, provider, base_url, api_key, model, images,
                     prompt="...", timeout=60.0, max_tokens=700) -> str
 
@@ -361,11 +361,29 @@ def chat(
     temperature: float = 0.7,
     max_tokens: int = 600,
     timeout: float = 60.0,
+    auth: str = "",
 ) -> str:
     """纯文本对话，返回模型回答文本；失败抛 ProviderError。
 
     provider 会先经 normalize_provider 归一化（如 chatgpt/中转 → openai）。
+    auth 是账号 id（chatgpt/claude/gemini/deepseek）时走账号额度，
+    忽略 base_url / api_key；model 为空时用该账号的默认模型。
     """
+    auth_id = str(auth or "").strip().lower()
+    if auth_id:
+        # 账号模式：延迟导入避免 providers <-> account_chat 循环依赖
+        import account_chat
+
+        msgs = _validate_messages(messages)
+        return account_chat.chat(
+            auth_id,
+            str(model or "").strip(),
+            msgs,
+            _as_float(temperature, "temperature"),
+            _as_int(max_tokens, "max_tokens"),
+            _timeout_value(timeout),
+        )
+
     name = _check_provider(provider)
     msgs = _validate_messages(messages)
     model_name = _require_model(model)

@@ -39,6 +39,7 @@ import com.qqbot.console.ui.GroupPage
 import com.qqbot.console.ui.HomePage
 import com.qqbot.console.ui.MorePage
 import com.qqbot.console.ui.RecordsPage
+import com.qqbot.console.ui.UpdatePromptHost
 import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -238,6 +239,8 @@ private fun MainScreen() {
     }
     // 第一次进入主界面时，请求忽略电池优化，防止后台被杀
     LaunchedEffect(Unit) { requestIgnoreBattery(ctx) }
+    // 每天最多检查一次 App 更新（开关在更多页）
+    LaunchedEffect(Unit) { AppUpdates.autoCheckIfDue(ctx) }
 
     Scaffold(
         topBar = { TopAppBar(title = TABS[tab].title, scrollBehavior = scrollBehavior) },
@@ -269,6 +272,7 @@ private fun MainScreen() {
                     else -> MorePage(padding, scrollBehavior)
                 }
             }
+            UpdatePromptHost()
             Toast(Modifier.align(Alignment.BottomCenter).padding(padding).padding(bottom = 12.dp))
         }
     }

@@ -2,11 +2,15 @@ package com.qqbot.console.ui
 
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.qqbot.console.AccountsStore
+import com.qqbot.console.PROVIDER_NAMES
+import com.qqbot.console.PROVIDER_ORDER
 import com.qqbot.console.Store
 import com.qqbot.console.objects
 import com.qqbot.console.patchOf
@@ -20,6 +24,16 @@ import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 private val PROVIDERS = listOf("openai", "claude", "gemini")
 private val PROVIDER_LABELS = listOf("OpenAI 兼容（DeepSeek / ChatGPT / Grok / 中转站）", "Claude 原生", "Gemini 原生")
 
+/** 认证方式：空串 = API Key，其余是账号 id。 */
+private val AUTH_IDS = listOf("", "chatgpt", "claude", "gemini", "deepseek")
+private val AUTH_LABELS = listOf(
+    "API Key",
+    "ChatGPT 账号",
+    "Claude 账号",
+    "Gemini 账号",
+    "DeepSeek 账号",
+)
+
 @Composable
 fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val scope = rememberCoroutineScope()
@@ -29,6 +43,10 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val active = profiles.firstOrNull { it.optStr("id") == activeId } ?: profiles.firstOrNull()
     var editingId by remember { mutableStateOf<String?>(null) }
     val editing = profiles.firstOrNull { it.optStr("id") == editingId } ?: active
+    var accountDialog by remember { mutableStateOf<String?>(null) }
+
+    // 进页面时拉一次账号状态（登录 / 退出后也会刷新）
+    LaunchedEffect(Unit) { AccountsStore.refresh() }
 
     /** 改选中那一套 profile 的一个字段，整份 profiles 数组一起提交（后端会保留掩码 key）。 */
     fun saveProfileField(field: String, value: Any) {
@@ -43,6 +61,25 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     }
 
     PageList(padding, scrollBehavior) {
+        group("AI 账号") {
+            PROVIDER_ORDER.forEach { id ->
+                val acc = AccountsStore.find(id)
+                ArrowPreference(
+                    title = PROVIDER_NAMES[id] ?: acc.name,
+                    summary = when {
+                        acc.signedIn -> acc.account.ifBlank { "已连接" }
+                        acc.error == "unsupported" -> "这个版本还不支持"
+                        else -> "未连接"
+                    },
+                    onClick = { accountDialog = id },
+                )
+            }
+        }
+        if (AccountsStore.error.isNotBlank()) {
+            item { Hint("账号状态读取失败：${AccountsStore.error}") }
+        }
+        item { Hint("用浏览器登录账号后，聊天走账号额度，不用填 API Key。") }
+
         group("当前接口") {
             if (profiles.isEmpty()) {
                 InfoRow("还没有接口", "在网页控制台添加")
@@ -72,7 +109,32 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 )
                 EditPreference("接口地址", editing.optStr("base_url")) { saveProfileField("base_url", it) }
                 EditPreference("模型", editing.optStr("model")) { if (it.isNotBlank()) saveProfileField("model", it) }
-                EditPreference("API Key", editing.optStr("api_key"), secret = true) { if (it.isNotBlank()) saveProfileField("api_key", it) }
+                val auth = editing.optStr("auth")
+                val authIdx = AUTH_IDS.indexOf(auth).coerceAtLeast(0)
+                OverlayDropdownPreference(
+                    title = "认证方式",
+                    summary = if (auth.isBlank()) "用 API Key 调用" else "用 ${PROVIDER_NAMES[auth] ?: auth} 账号登录",
+                    items = AUTH_LABELS,
+                    selectedIndex = authIdx,
+                    onSelectedIndexChange = { i -> saveProfileField("auth", AUTH_IDS[i]) },
+                )
+                EditPreference(
+                    "API Key",
+                    editing.optStr("api_key"),
+                    summary = if (auth.isNotBlank()) "已改用账号登录" else null,
+                    secret = true,
+                ) { if (it.isNotBlank()) saveProfileField("api_key", it) }
+                if (auth.isNotBlank()) {
+                    val acc = AccountsStore.find(auth)
+                    if (acc.signedIn) {
+                        Hint(
+                            "已用 ${PROVIDER_NAMES[auth] ?: auth} 账号登录" +
+                                if (acc.account.isBlank()) "。" else "（${acc.account}）。",
+                        )
+                    } else {
+                        Hint("${PROVIDER_NAMES[auth] ?: auth} 账号还没连接，先到上方「AI 账号」里连接，否则这条接口用不了。")
+                    }
+                }
                 EditPreference("温度", editing.opt("temperature")?.toString() ?: "0.7", numeric = true) {
                     it.toDoubleOrNull()?.let { v -> saveProfileField("temperature", v.coerceIn(0.0, 2.0)) }
                 }
@@ -129,5 +191,9 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 onClick = { scope.launch { com.qqbot.console.Api.post("/api/context/clear"); Store.toast = "已清空" } },
             )
         }
+    }
+
+    accountDialog?.let { id ->
+        AccountDialog(providerId = id, onDismiss = { accountDialog = null })
     }
 }

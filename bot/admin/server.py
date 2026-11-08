@@ -31,6 +31,29 @@ HOST, PORT = "127.0.0.1", int(__import__("os").environ.get("QQBOT_ADMIN_PORT") o
 
 NAPCAT_CONFIG = Path("/opt/napcat/napcat/config")
 
+# ---------------------------------------------------------------- 可选模块
+# 账号登录在管理台进程里跑（管理台常驻，机器人进程可能被关）。
+# 把 bot/ 加进 sys.path 后 import account_core / updater；
+# 模块缺失或损坏时管理台仍要能启动，对应接口返回中文错误。
+if str(BOT) not in sys.path:
+    sys.path.insert(0, str(BOT))
+
+account_core = None
+ACCOUNTS_IMPORT_ERROR = ""
+try:
+    import account_core  # noqa: F401  (T1 提供)
+except Exception as _e:
+    ACCOUNTS_IMPORT_ERROR = type(_e).__name__
+ACCOUNT_ERROR_CLS = getattr(account_core, "AccountError", ()) if account_core is not None else ()
+
+updater = None
+UPDATER_IMPORT_ERROR = ""
+try:
+    import updater  # noqa: F401  (T4 提供)
+except Exception as _e:
+    UPDATER_IMPORT_ERROR = type(_e).__name__
+UPDATER_ERROR_CLS = getattr(updater, "UpdaterError", ()) if updater is not None else ()
+
 
 # ---------------------------------------------------------------- 工具
 def read_json(path: Path, default=None):
@@ -796,6 +819,235 @@ def cleanup_thread():
         time.sleep(600)   # 每 10 分钟
 
 
+# ---------------------------------------------------------------- 账号 / 更新 API
+ACCOUNT_VIEW_KEYS = ("id", "name", "signedIn", "account", "models", "default_model", "error")
+ATTEMPT_VIEW_KEYS = ("id", "provider", "phase", "message", "url", "userCode",
+                     "placeholder", "account", "error")
+ACCOUNT_PHASES = ("starting", "open", "device", "prompt", "done", "failed", "cancelled")
+UPDATE_PHASES = ("idle", "checking", "downloading", "extracting", "syncing", "done", "failed")
+
+
+def _redact_text(text) -> str:
+    """错误/状态文案统一处理：压成一行、去掉疑似密钥、限长。"""
+    text = " ".join(str(text or "").split())
+    try:
+        if account_core is not None and hasattr(account_core, "redact"):
+            text = str(account_core.redact(text))
+    except Exception:
+        pass
+    return text[:200]
+
+
+def _public_account(item) -> dict:
+    """只挑白名单字段，避免把 record 里的 token 透给前端。"""
+    out: dict = {}
+    if not isinstance(item, dict):
+        item = {}
+    for key in ACCOUNT_VIEW_KEYS:
+        if key in item:
+            out[key] = item[key]
+    out["id"] = str(out.get("id") or "")
+    out["name"] = str(out.get("name") or out["id"])
+    out["signedIn"] = bool(out.get("signedIn"))
+    out["account"] = str(out.get("account") or "")
+    models = out.get("models")
+    out["models"] = [str(m) for m in models if str(m)] if isinstance(models, list) else []
+    out["default_model"] = str(out.get("default_model") or "")
+    if out.get("error") is not None:
+        out["error"] = _redact_text(out["error"])
+    return out
+
+
+def _public_attempt(item) -> dict:
+    """attempt 视图白名单：open/device 的 url 是给用户浏览器用的，保留。"""
+    out: dict = {}
+    if not isinstance(item, dict):
+        item = {}
+    for key in ATTEMPT_VIEW_KEYS:
+        if key in item:
+            out[key] = item[key]
+    phase = str(out.get("phase") or "")
+    out["phase"] = phase if phase in ACCOUNT_PHASES else "failed"
+    out["id"] = str(out.get("id") or "")
+    out["provider"] = str(out.get("provider") or "")
+    out["message"] = _redact_text(out.get("message"))
+    for key in ("url", "userCode", "placeholder", "account"):
+        if key in out:
+            out[key] = str(out.get(key) or "")
+    err = out.get("error")
+    out["error"] = _redact_text(err) if err else None
+    return out
+
+
+def _accounts_unavailable() -> dict:
+    return {"ok": False, "error": "AI 账号功能暂不可用（账号模块加载失败），重启管理服务后再试"}
+
+
+def _updater_unavailable() -> dict:
+    return {"ok": False, "error": "更新功能暂不可用（更新模块加载失败），重启管理服务后再试"}
+
+
+def _accounts_call_error(e: Exception) -> dict:
+    """AccountError 的 message 是给用户看的中文短句；其它异常一律泛化。"""
+    if ACCOUNT_ERROR_CLS and isinstance(e, ACCOUNT_ERROR_CLS):
+        msg = _redact_text(getattr(e, "message", "") or str(e))
+        if msg:
+            return {"ok": False, "error": msg}
+    return {"ok": False, "error": "账号操作失败，请稍后再试"}
+
+
+def _updater_call_error(e: Exception, fallback: str) -> dict:
+    if UPDATER_ERROR_CLS and isinstance(e, UPDATER_ERROR_CLS):
+        msg = _redact_text(str(e))
+        if msg:
+            return {"ok": False, "error": msg}
+    return {"ok": False, "error": fallback}
+
+
+def _api_safe(fn, fallback: str) -> dict:
+    """账号/更新接口兜底：任何意外都只给中文短句，不泄露异常内容。"""
+    try:
+        data = fn()
+        return data if isinstance(data, dict) else {"ok": False, "error": fallback}
+    except Exception:
+        return {"ok": False, "error": fallback}
+
+
+def api_accounts_list() -> dict:
+    if account_core is None:
+        return _accounts_unavailable()
+    try:
+        items = account_core.list_view()
+    except Exception:
+        return {"ok": False, "error": "读取账号状态失败，请稍后再试"}
+    if not isinstance(items, list):
+        items = []
+    return {"ok": True, "accounts": [_public_account(x) for x in items]}
+
+
+def api_accounts_begin(body: dict) -> dict:
+    if account_core is None:
+        return _accounts_unavailable()
+    provider = str((body or {}).get("provider") or "").strip()
+    if not provider:
+        return {"ok": False, "error": "缺少 provider 参数"}
+    ids = getattr(account_core, "PROVIDER_IDS", None)
+    if isinstance(ids, (list, tuple)) and provider not in ids:
+        return {"ok": False, "error": "不支持这个账号类型"}
+    try:
+        data = account_core.begin(provider)
+    except Exception as e:
+        return _accounts_call_error(e)
+    attempt = data.get("attempt") if isinstance(data, dict) else data
+    return {"ok": True, "attempt": _public_attempt(attempt)}
+
+
+def api_accounts_poll(attempt_id: str) -> dict:
+    if account_core is None:
+        return _accounts_unavailable()
+    attempt_id = str(attempt_id or "").strip()
+    if not attempt_id:
+        return {"ok": False, "error": "缺少 attempt 参数"}
+    try:
+        data = account_core.poll(attempt_id)
+    except Exception as e:
+        return _accounts_call_error(e)
+    attempt = data.get("attempt") if isinstance(data, dict) else data
+    return {"ok": True, "attempt": _public_attempt(attempt)}
+
+
+def api_accounts_answer(body: dict) -> dict:
+    if account_core is None:
+        return _accounts_unavailable()
+    body = body or {}
+    attempt_id = str(body.get("attempt") or "").strip()
+    value = str(body.get("value") or "")
+    if not attempt_id:
+        return {"ok": False, "error": "缺少 attempt 参数"}
+    if not value.strip():
+        return {"ok": False, "error": "内容不能为空，请粘贴完整网址或代码"}
+    try:
+        account_core.answer(attempt_id, value[:4000])
+    except Exception as e:
+        return _accounts_call_error(e)
+    return {"ok": True}
+
+
+def api_accounts_cancel(body: dict) -> dict:
+    if account_core is None:
+        return _accounts_unavailable()
+    attempt_id = str((body or {}).get("attempt") or "").strip()
+    if not attempt_id:
+        return {"ok": False, "error": "缺少 attempt 参数"}
+    try:
+        account_core.cancel(attempt_id)
+    except Exception as e:
+        return _accounts_call_error(e)
+    return {"ok": True}
+
+
+def api_accounts_signout(body: dict) -> dict:
+    if account_core is None:
+        return _accounts_unavailable()
+    provider = str((body or {}).get("provider") or "").strip()
+    if not provider:
+        return {"ok": False, "error": "缺少 provider 参数"}
+    try:
+        account_core.signout(provider)
+    except Exception as e:
+        return _accounts_call_error(e)
+    return {"ok": True}
+
+
+def api_update_check() -> dict:
+    if updater is None:
+        return _updater_unavailable()
+    try:
+        data = updater.check()
+    except Exception as e:
+        return _updater_call_error(e, "检查更新失败，请稍后再试")
+    if not isinstance(data, dict):
+        return {"ok": False, "error": "检查更新失败，请稍后再试"}
+    return {"ok": True, **data}
+
+
+def api_update_status() -> dict:
+    if updater is None:
+        return _updater_unavailable()
+    try:
+        data = updater.status()
+    except Exception:
+        return {"ok": False, "error": "读取更新状态失败，请稍后再试"}
+    out = {"ok": True, "phase": "idle", "message": "", "error": None, "restart_required": False}
+    if isinstance(data, dict):
+        phase = str(data.get("phase") or "idle")
+        out["phase"] = phase if phase in UPDATE_PHASES else "failed"
+        out["message"] = _redact_text(data.get("message"))
+        err = data.get("error")
+        out["error"] = _redact_text(err) if err else None
+        out["restart_required"] = bool(data.get("restart_required"))
+        if data.get("updated_at"):
+            out["updated_at"] = data["updated_at"]
+    return out
+
+
+def api_update_start() -> dict:
+    if updater is None:
+        return _updater_unavailable()
+    try:
+        started = bool(updater.update())
+    except Exception as e:
+        return _updater_call_error(e, "启动更新失败，请稍后再试")
+    if started:
+        return {"ok": True, "started": True}
+    return {
+        "ok": True,
+        "started": False,
+        "message": "已经在更新了，请稍等",
+        "status": api_update_status(),
+    }
+
+
 # ---------------------------------------------------------------- HTTP
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -851,6 +1103,16 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/api/presets":
                 return self._json({"ok": True, "providers": PROVIDER_PRESETS})
+            if path == "/api/accounts":
+                return self._json(_api_safe(api_accounts_list, "读取账号状态失败，请稍后再试"))
+            if path == "/api/accounts/poll":
+                attempt_id = (qs.get("attempt") or [""])[0]
+                return self._json(_api_safe(lambda: api_accounts_poll(attempt_id),
+                                            "读取登录状态失败，请稍后再试"))
+            if path == "/api/update/bot":
+                return self._json(_api_safe(api_update_check, "检查更新失败，请稍后再试"))
+            if path == "/api/update/bot/status":
+                return self._json(_api_safe(api_update_status, "读取更新状态失败，请稍后再试"))
             if path == "/api/state":
                 return self._json(build_state())
             if path == "/api/context":
@@ -911,6 +1173,20 @@ class Handler(BaseHTTPRequestHandler):
                 result = api_bot_action(action)
                 result["state"] = build_state()
                 return self._json(result)
+            if path == "/api/accounts/begin":
+                return self._json(_api_safe(lambda: api_accounts_begin(body),
+                                            "开始登录失败，请稍后再试"))
+            if path == "/api/accounts/answer":
+                return self._json(_api_safe(lambda: api_accounts_answer(body),
+                                            "提交失败，请稍后再试"))
+            if path == "/api/accounts/cancel":
+                return self._json(_api_safe(lambda: api_accounts_cancel(body),
+                                            "取消失败，请稍后再试"))
+            if path == "/api/accounts/signout":
+                return self._json(_api_safe(lambda: api_accounts_signout(body),
+                                            "退出登录失败，请稍后再试"))
+            if path == "/api/update/bot":
+                return self._json(_api_safe(api_update_start, "启动更新失败，请稍后再试"))
             return self._error("not found", 404)
         except subprocess.TimeoutExpired:
             return self._error("操作超时（脚本仍可能在后台继续执行，稍后刷新看状态）", 500)
@@ -940,11 +1216,22 @@ def main():
     srv = ThreadingHTTPServer((HOST, PORT), Handler)
     srv.daemon_threads = True
     print(f"[admin] 管理台已启动: http://{HOST}:{PORT}/")
+    if account_core is None:
+        print(f"[admin] 提示: 账号模块未加载（{ACCOUNTS_IMPORT_ERROR}），AI 账号接口暂不可用",
+              file=sys.stderr)
+    if updater is None:
+        print(f"[admin] 提示: 更新模块未加载（{UPDATER_IMPORT_ERROR}），更新接口暂不可用",
+              file=sys.stderr)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        try:
+            if account_core is not None and hasattr(account_core, "dispose"):
+                account_core.dispose()
+        except Exception:
+            pass
         srv.server_close()
 
 

@@ -25,17 +25,21 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qqbot.console.Api
+import com.qqbot.console.AppUpdates
+import com.qqbot.console.BotUpdates
 import com.qqbot.console.Env
 import com.qqbot.console.Installer
 import com.qqbot.console.Store
 import com.qqbot.console.objects
 import com.qqbot.console.patchOf
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 @Composable
@@ -44,6 +48,71 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val scope = rememberCoroutineScope()
     var logs by remember { mutableStateOf<String?>(null) }
     var confirmReinstall by remember { mutableStateOf(false) }
+
+    // ---------- 更新 ----------
+    var autoCheck by remember { mutableStateOf(AppUpdates.autoCheckEnabled(ctx)) }
+    var botCheck by remember { mutableStateOf<JSONObject?>(null) }
+    var botChecking by remember { mutableStateOf(false) }
+    var botUpdating by remember { mutableStateOf(false) }
+    var botPhase by remember { mutableStateOf("") }
+    var botMessage by remember { mutableStateOf("") }
+    var botRestartRequired by remember { mutableStateOf(false) }
+
+    fun botStatusText(): String {
+        val phase = when (botPhase) {
+            "checking" -> "检查中"
+            "downloading" -> "下载中"
+            "extracting" -> "解压中"
+            "syncing" -> "正在同步"
+            "done" -> "已完成"
+            "failed" -> "失败"
+            else -> if (botUpdating) "进行中" else ""
+        }
+        return listOf(phase, botMessage).filter { it.isNotBlank() }.joinToString(" · ")
+    }
+
+    fun botSummaryText(): String = when {
+        botUpdating -> botStatusText().ifBlank { "正在更新…" }
+        botChecking -> "检查中…"
+        botPhase == "done" -> "已更新，重启服务后生效"
+        botPhase == "failed" -> "上次更新失败，可重试"
+        botCheck == null -> "点击检查并更新到最新代码"
+        botCheck?.optBoolean("behind") == true -> "有新版本代码，点击更新"
+        else -> "已是最新代码"
+    }
+
+    suspend fun refreshBotCheck() {
+        botChecking = true
+        val r = BotUpdates.check()
+        botChecking = false
+        if (r != null) botCheck = r
+    }
+
+    // 进入页面时查一次机器人代码有没有更新
+    LaunchedEffect(Unit) { refreshBotCheck() }
+
+    // 更新进行中时轮询状态
+    LaunchedEffect(botUpdating) {
+        if (!botUpdating) return@LaunchedEffect
+        while (true) {
+            delay(1500)
+            val st = BotUpdates.status() ?: continue
+            botPhase = st.optStr("phase")
+            botMessage = st.optStr("message")
+            botRestartRequired = st.optBoolean("restart_required")
+            if (botPhase == "failed") {
+                Store.toast = "更新失败：" + st.optStr("error").ifBlank { botMessage.ifBlank { "未知原因" } }
+                break
+            }
+            if (botPhase == "done" || botPhase == "idle") {
+                if (botPhase == "done") Store.toast = "机器人代码已更新，重启服务后生效"
+                break
+            }
+        }
+        // 结束后刷新一次检查结果，再结束轮询
+        BotUpdates.check()?.let { botCheck = it }
+        botUpdating = false
+    }
 
     val kw = Store.cfg("plugins", "keyword") ?: JSONObject()
     val rules = kw.optJSONArray("rules")?.objects().orEmpty()
@@ -112,6 +181,67 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     )
                 }
             }
+        }
+
+        group("更新") {
+            ArrowPreference(
+                title = if (AppUpdates.checking) "正在检查更新…" else "检查更新",
+                summary = "当前版本 ${AppUpdates.currentVersion}",
+                onClick = { scope.launch { AppUpdates.checkAndPrompt() } },
+            )
+            SwitchPreference(
+                title = "自动检查更新",
+                summary = "每天最多检查一次，有新版时提醒",
+                checked = autoCheck,
+                onCheckedChange = { on ->
+                    autoCheck = on
+                    AppUpdates.setAutoCheck(ctx, on)
+                },
+            )
+            ArrowPreference(
+                title = "更新机器人代码",
+                summary = botSummaryText(),
+                onClick = {
+                    scope.launch {
+                        if (botUpdating) {
+                            Store.toast = "正在更新，请稍候"
+                            return@launch
+                        }
+                        val c = BotUpdates.check()
+                        if (c == null) {
+                            Store.toast = "检查失败：管理服务没有响应"
+                            return@launch
+                        }
+                        botCheck = c
+                        if (!c.optBoolean("behind")) {
+                            Store.toast = "机器人代码已是最新"
+                            return@launch
+                        }
+                        val err = BotUpdates.start()
+                        if (err.isBlank()) {
+                            botRestartRequired = false
+                            botPhase = "checking"
+                            botMessage = "正在开始更新…"
+                            botUpdating = true
+                        } else {
+                            Store.toast = "更新没能开始：$err"
+                        }
+                    }
+                },
+            )
+            if (botUpdating || botPhase == "done" || botPhase == "failed") {
+                InfoRow("更新状态", botStatusText().ifBlank { "—" })
+            }
+            if (botRestartRequired || botPhase == "done") {
+                ArrowPreference(
+                    title = "重启服务",
+                    summary = "让更新后的机器人代码生效",
+                    onClick = { scope.launch { Store.action("bot_restart", "机器人已重启，更新已生效") } },
+                )
+            }
+        }
+        if (botPhase == "done") {
+            item { Hint("机器人代码已经更新。重启服务后新代码生效；如果更新了管理台，重启 App 里的服务才会生效。") }
         }
 
         group("其它") {

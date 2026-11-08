@@ -6,6 +6,8 @@
 管理台既是网页也能打包成独立的安卓 App（服务内置在 App 里，不依赖 Termux / 电脑 / 服务器）。
 
 - **AI 聊天**：多套接口随时切换（OpenAI 兼容 / Claude / Gemini 原生，支持中转站）
+- **AI 账号**：ChatGPT / Claude / Gemini / DeepSeek 可以用账号登录（浏览器授权，不填 API Key，用订阅额度）
+- **自动更新**：App 检查 GitHub 发布并一键安装；机器人代码也能一键更新
 - **触发方式**：@、叫名字、引用它的消息，或唤醒后连续对话（可关）
 - **群管理**：入群欢迎、违禁词（支持正则）、刷屏检测（文字 / 图片），豁免开关与名单
 - **管理指令**：引用消息 + @它 说「撤回 / 禁言 / 踢了」
@@ -402,8 +404,10 @@ QQ 在 proot 里会持续刷 GPU/dbus 错误，日志可能暴涨（出现过 41
 }
 ```
 
-生效规则：当前 profile 里的 `provider/base_url/api_key/model/temperature/max_tokens` 覆盖顶层同名字段；
+生效规则：当前 profile 里的 `provider/base_url/api_key/auth/model/temperature/max_tokens` 覆盖顶层同名字段；
 其它设置（人格提示词、触发条件、搜索、识图、发文件）全局生效，不随 profile 变。
+
+`auth` 是**认证方式**：空串 = 用 API Key；填 `chatgpt` / `claude` / `gemini` / `deepseek` 就用下面「AI 账号」里连接的账号额度，此时 `base_url`、`api_key` 不生效，`model` 留空用该账号默认模型。
 
 ### 怎么切换
 
@@ -430,7 +434,62 @@ QQ 在 proot 里会持续刷 GPU/dbus 错误，日志可能暴涨（出现过 41
 - **中转站**：多数是 OpenAI 兼容，选「中转站 / 自定义」填 `/v1` 地址；Claude 原生协议的中转把 `provider` 选 `claude`。
 - 每套的 Key 在控制台都是掩码显示，只改其它字段不会丢 Key（后端自动保留）。
 
-## 十、注意
+## 十、AI 账号（订阅登录，不用 API Key）
+
+控制台 App 的「AI」页和网页控制台都能连四种账号：**ChatGPT、Claude、Gemini、DeepSeek**。
+登录在浏览器里完成，机器人用账号额度对话，不占用 API Key。
+
+### 怎么连
+
+1. App 打开 **AI** 页 → 顶部 **AI 账号** → 点要连的服务。
+2. 点 **开始登录**，按提示在浏览器里完成授权（有的服务会显示一次性代码，复制到网页里）。
+3. 回到 App，状态变成「已连接」就成功了。随时可以**退出登录**。
+
+网页控制台（`http://127.0.0.1:8080/`）的 AI 页也有同样的「AI 账号」卡片。
+
+### 怎么用
+
+在 **接口设置 → 认证方式** 里选对应账号；也可以直接改 `bot/config.json` 的 profile：
+
+```json
+{"id":"claude-acc","name":"Claude 账号","provider":"claude","auth":"claude","model":""}
+```
+
+- `auth` 为空 = 用 API Key；非空 = 用 `chatgpt`/`claude`/`gemini`/`deepseek` 账号。
+- 账号模式下 `base_url`/`api_key` 不生效；`model` 留空就用该账号的默认模型。
+- 识图 / 画图仍然走 API Key 配置。
+
+### 注意
+
+- 这是用**订阅账号额度**，不是官方 API；高频或多人使用可能触发上游风控，**风险自担**，建议用小号。
+- 登录令牌只保存在手机 `bot/data/accounts.json`（权限 600），不会上传到任何地方。
+- Gemini 需要账号地区支持 Gemini Code Assist；DeepSeek 走 `platform.deepseek.com` 授权。
+- 浏览器和机器人要在同一台设备上（回调地址是 `127.0.0.1`）；用另一台电脑打开网页控制台时，选「粘贴网址 / 验证码」的方式完成登录。
+
+## 十一、自动更新
+
+### App 自身
+
+- 更多页 → **更新** → **检查更新**：和 GitHub Releases 比较版本，有新版提示「立即更新」。
+- 下载后校验 SHA256，通过后调起系统安装；没有「安装未知应用」权限时会先跳到系统设置。
+- **自动检查更新**默认开启，每天最多一次；跳过的版本不再提示。
+
+### 机器人代码
+
+- 更多页 → **更新** → **更新机器人代码**：从 GitHub `main` 拉最新代码，更新 `bot/`、`scripts/`、`start-all.sh`，
+  保留 `config.json`、`data/`、`logs/`。
+- 更新完成后要**重启服务**才生效（页面会提示，并提供重启入口）。
+- 更新记录写在 `bot/.update-meta.json`；首次更新之后「已是最新」的判断才准确。
+
+### 命令行
+
+```bash
+curl -s http://127.0.0.1:8080/api/update/bot          # 看有没有更新
+curl -s -X POST http://127.0.0.1:8080/api/update/bot  # 开始更新
+curl -s http://127.0.0.1:8080/api/update/bot/status   # 看进度
+```
+
+## 十二、注意
 
 - 自建 QQ 机器人属于**第三方协议**，腾讯官方不支持，**有被风控/封号的风险**，务必用不常用的小号。
 - 机器人账号不要频繁加群、发广告、改设备，容易触发风控。

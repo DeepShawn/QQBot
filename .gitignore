@@ -37,3 +37,8 @@ venv/
 .DS_Store
 .idea/
 *.iml
+
+# ---- 运行时更新记录 / 账号令牌 ----
+bot/.update-meta.json
+bot/.update-tmp/
+apk-miuix/.kotlin/

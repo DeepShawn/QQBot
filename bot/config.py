@@ -57,6 +57,8 @@ DEFAULTS = {
             "provider": "openai",
             "base_url": "https://api.deepseek.com/v1",
             "api_key": "",
+            # 认证方式：空串 = 用上面的 API Key；也可以填账号 id（chatgpt/claude/gemini/deepseek）
+            "auth": "",
             "model": "deepseek-chat",
             "temperature": 0.7,
             "max_tokens": 1600,

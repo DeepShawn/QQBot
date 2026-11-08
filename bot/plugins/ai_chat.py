@@ -74,10 +74,26 @@ class Plugin(PluginBase):
             self.ctx.log.warning("保存上下文失败: %s", e)
 
     # ---------------- 多套接口（profiles） ----------------
-    PROFILE_FIELDS = ("provider", "base_url", "api_key", "model", "temperature", "max_tokens")
+    PROFILE_FIELDS = (
+        "provider",
+        "base_url",
+        "api_key",
+        "auth",
+        "model",
+        "temperature",
+        "max_tokens",
+    )
 
     def effective_cfg(self) -> dict:
-        """顶层配置 + 当前激活 profile 的覆盖（provider/base_url/key/model/温度/tokens）。"""
+        """顶层配置 + 当前激活 profile 的覆盖。"""
+        return self._profile_settings()
+
+    def _profile_settings(self) -> dict:
+        """当前生效的接口设置。
+
+        auth 为空串表示用 API Key；非空是账号 id（chatgpt/claude/gemini/deepseek）。
+        账号模式下 model 只看当前 profile，空串表示用该账号的默认模型。
+        """
         cfg = dict(self.ctx.plugin_cfg("ai_chat"))
         profiles = [p for p in (cfg.get("profiles") or []) if isinstance(p, dict)]
         active = str(cfg.get("active_profile") or "")
@@ -86,9 +102,18 @@ class Plugin(PluginBase):
             prof = profiles[0]
         if prof:
             for field in self.PROFILE_FIELDS:
+                if field == "auth":
+                    continue
                 v = prof.get(field)
                 if v not in (None, ""):
                     cfg[field] = v
+            # 认证方式按 profile 显式值：空串也是有效值（改用 API Key）
+            if "auth" in prof:
+                cfg["auth"] = str(prof.get("auth") or "").strip()
+            # 账号模式：模型只认当前 profile；空就用账号默认模型
+            if cfg.get("auth"):
+                cfg["model"] = str(prof.get("model") or "").strip()
+        cfg["auth"] = str(cfg.get("auth") or "").strip()
         return cfg
 
     # ---------------- 触发判断 ----------------
@@ -311,15 +336,20 @@ class Plugin(PluginBase):
 
     # ---------------- 调模型（openai / claude / gemini 由 providers 适配） ----------------
     def _sync_chat(self, cfg: dict, messages: list) -> str:
+        auth = str(cfg.get("auth") or "").strip()
+        model = str(cfg.get("model") or "").strip()
+        if not model and not auth:
+            model = "deepseek-chat"
         return providers.chat(
             provider=str(cfg.get("provider") or "openai"),
             base_url=str(cfg.get("base_url", "")),
             api_key=str(cfg.get("api_key", "")),
-            model=str(cfg.get("model", "deepseek-chat")),
+            model=model,
             messages=messages,
             temperature=float(cfg.get("temperature", 0.7)),
             max_tokens=int(cfg.get("max_tokens", 600)),
             timeout=float(cfg.get("timeout_seconds", 60)),
+            auth=auth,
         )
 
     @staticmethod
@@ -451,13 +481,14 @@ class Plugin(PluginBase):
             await self.ctx.reply(event, "别急，我还在想上一个问题～")
             return True
 
+        auth = str(cfg.get("auth") or "").strip()
         api_key = str(cfg.get("api_key", "")).strip()
-        if not api_key:
+        if not auth and not api_key:
             if not self._warned_no_key:
-                self.ctx.log.warning("ai_chat 未配置 api_key，跳过 AI 回复（编辑 bot/config.json）")
+                self.ctx.log.warning("ai_chat 未配置 api_key/账号，跳过 AI 回复（编辑 bot/config.json）")
                 self._warned_no_key = True
             if event.get("message_type") == "private":
-                await self.ctx.reply(event, "[AI 未配置] 请先在控制台 AI 页填 API Key")
+                await self.ctx.reply(event, "[AI 未配置] 请先在控制台 AI 页填 API Key 或连接 AI 账号")
                 return True
             return False
 
