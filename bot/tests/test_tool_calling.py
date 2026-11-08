@@ -68,6 +68,8 @@ class FakeCtx:
         self._cfg = {
             "ai_chat": dict(ai_cfg or {}),
             "python_run": dict(py_cfg) if py_cfg is not None else {},
+            # 默认关闭 image_gen，避免这些 run_python 用例被画图工具影响
+            "image_gen": {"enabled": False},
         }
         self.replies: list[str] = []
 
@@ -372,6 +374,8 @@ class ToolAvailabilityTests(ToolCallingTestCase):
 
     async def test_non_openai_provider_no_tools(self):
         self.ctx._cfg["ai_chat"]["provider"] = "claude"
+        # 关掉 python_run，避免账号/非 openai 模式的意图路由介入（另有专门测试）
+        self.ctx._cfg["python_run"] = {"enabled": False}
         self.install_models()
         await self.run_event(make_event("你好"))
         self.assertEqual(self.tool_calls, [])
@@ -379,12 +383,14 @@ class ToolAvailabilityTests(ToolCallingTestCase):
 
     async def test_account_mode_no_tools(self):
         self.ctx._cfg["ai_chat"].update({"auth": "claude", "api_key": ""})
+        self.ctx._cfg["python_run"] = {"enabled": False}
         self.install_models()
         await self.run_event(make_event("你好"))
         self.assertEqual(self.tool_calls, [])
         self.assertEqual(len(self.plain_calls), 1)
         system = self.plain_calls[0]["messages"][0]["content"]
-        self.assertIn(ai_chat.LOCAL_PYTHON_NO_TOOL_HINT, system)
+        # python_run 被禁用时不再追加本地 Python 提示
+        self.assertNotIn("【本地 Python】", system)
 
     async def test_private_user_gets_tools(self):
         self.install_models([{"content": "private ok", "tool_calls": []}])

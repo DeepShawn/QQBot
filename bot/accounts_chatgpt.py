@@ -10,7 +10,10 @@
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import re
 import time
 import urllib.error
 import urllib.parse
@@ -57,6 +60,17 @@ ORIGINATOR = "pi"
 TOKEN_TIMEOUT = 30.0
 CHAT_TIMEOUT = 90.0
 EXPIRES_MARGIN_SECONDS = 60
+
+# 画图（ChatGPT OAuth 账号额度，Codex 图片接口）
+IMAGES_URL = "https://chatgpt.com/backend-api/codex/images/generations"
+IMAGE_MODEL = "gpt-image-2"
+IMAGE_TIMEOUT = 120.0
+IMAGE_MAX_BYTES = 20 * 1024 * 1024
+IMAGE_ERROR_MAP = {
+    401: ("expired", None),
+    403: ("expired", None),
+    429: ("generic", "画图请求太频繁或额度用完了，稍后再试"),
+}
 DEVICE_DEFAULT_INTERVAL = 5.0
 DEVICE_MIN_INTERVAL = 1.0
 
@@ -350,6 +364,252 @@ def begin(attempt) -> dict:
         return _begin_browser(attempt)
 
 
+# ---------------------------------------------------------------- 画图（账号额度）
+
+
+def _image_headers(access: str, account_id: str, accept: str = "application/json") -> dict:
+    return {
+        "Authorization": f"Bearer {access}",
+        "ChatGPT-Account-ID": account_id,
+        "accept": accept,
+        "content-type": "application/json",
+        "originator": ORIGINATOR,
+        "User-Agent": account_core.BROWSER_USER_AGENT,
+    }
+
+
+def _looks_like_image(data: bytes) -> bool:
+    if not data or len(data) < 12:
+        return False
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True
+    if data.startswith(b"\xff\xd8\xff"):
+        return True
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return True
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True
+    if data.startswith(b"BM"):
+        return True
+    return False
+
+
+def _decode_image_b64(value) -> bytes:
+    """解码图片 base64（兼容 data: 前缀/换行）；失败抛 AccountError。
+
+    b64_json 按接口约定就是图片数据，这里只做 base64 解码；图片头校验放在
+    url 下载路径（_download_generated_image）里。
+    """
+    text = str(value or "").strip()
+    if text.startswith("data:"):
+        comma = text.find(",")
+        if comma >= 0:
+            text = text[comma + 1:]
+    text = re.sub(r"\s+", "", text)
+    if not text:
+        raise account_core.AccountError("generic", "ChatGPT 画图返回的图片数据是空的")
+    text += "=" * (-len(text) % 4)
+    try:
+        raw = base64.b64decode(text, validate=False)
+    except (binascii.Error, ValueError) as e:
+        raise account_core.AccountError(
+            "generic", "ChatGPT 画图返回的图片数据看不懂"
+        ) from e
+    if not raw:
+        raise account_core.AccountError("generic", "ChatGPT 画图返回的图片数据是空的")
+    return raw
+
+
+def _download_generated_image(url: str, timeout: float) -> bytes:
+    """下载接口返回的图片 URL（浏览器 UA，上限 20MB，校验图片头）。"""
+    request = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": account_core.BROWSER_USER_AGENT,
+            "Accept": "image/*,*/*;q=0.8",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=float(timeout)) as response:
+            length = response.headers.get("Content-Length")
+            if length and str(length).strip().isdigit():
+                if int(length) > IMAGE_MAX_BYTES:
+                    raise account_core.AccountError("generic", "生成的图片太大了（超过 20MB）")
+            raw = response.read(IMAGE_MAX_BYTES + 1)
+    except account_core.AccountError:
+        raise
+    except urllib.error.HTTPError as e:
+        raise account_core.AccountError(
+            "generic", f"下载生成的图片失败（HTTP {int(e.code)}）"
+        ) from e
+    except TimeoutError as e:
+        raise account_core.AccountError("timeout") from e
+    except urllib.error.URLError as e:
+        raise account_core.AccountError("network") from e
+    except OSError as e:
+        raise account_core.AccountError("network") from e
+    if len(raw) > IMAGE_MAX_BYTES:
+        raise account_core.AccountError("generic", "生成的图片太大了（超过 20MB）")
+    if not raw:
+        raise account_core.AccountError("generic", "下载到的图片是空的")
+    if not _looks_like_image(raw):
+        raise account_core.AccountError("generic", "下载到的内容不是有效图片")
+    return raw
+
+
+def _images_from_payload(data: dict, timeout: float) -> list[bytes]:
+    """从 images/generations 返回里取图片：data[].b64_json 或 data[].url。"""
+    items = data.get("data") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return []
+    images: list[bytes] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        b64 = item.get("b64_json") or item.get("b64")
+        if isinstance(b64, str) and b64.strip():
+            try:
+                images.append(_decode_image_b64(b64))
+            except account_core.AccountError:
+                continue
+            continue
+        url = item.get("url")
+        if isinstance(url, str) and url.startswith(("http://", "https://")):
+            try:
+                images.append(_download_generated_image(url, timeout))
+            except account_core.AccountError:
+                continue
+    return images
+
+
+def _generate_images_via_responses(
+    prompt: str, size: str, timeout: float, access: str, account_id: str
+) -> list[bytes]:
+    """兜底路径：responses + image_generation 工具，SSE 的 item.result 是 base64。"""
+    payload = {
+        "model": DEFAULT_MODEL,
+        "store": False,
+        "stream": True,
+        "instructions": "Generate the image the user asks for.",
+        "input": [
+            {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
+        ],
+        "tools": [
+            {"type": "image_generation", "output_format": "png", "size": size}
+        ],
+        "tool_choice": "auto",
+    }
+    events = account_core.post_sse(
+        API_URL,
+        payload,
+        headers=_image_headers(access, account_id, accept="text/event-stream"),
+        timeout=float(timeout),
+        label="ChatGPT 画图",
+        error_map=IMAGE_ERROR_MAP,
+        secrets_=(access,),
+    )
+    images: list[bytes] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") != "response.output_item.done":
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict) or item.get("type") != "image_generation_call":
+            continue
+        result = item.get("result")
+        if isinstance(result, str) and result.strip():
+            try:
+                images.append(_decode_image_b64(result))
+            except account_core.AccountError:
+                continue
+    return images
+
+
+def generate_images(
+    record: dict,
+    prompt: str,
+    size: str = "1024x1024",
+    model: str | None = None,
+    timeout: float = IMAGE_TIMEOUT,
+) -> list[bytes]:
+    """用 ChatGPT 账号额度画图，返回图片字节列表；失败抛 AccountError（中文）。
+
+    主路径：POST /backend-api/codex/images/generations（model 默认 gpt-image-2）。
+    兜底：/backend-api/codex/responses + image_generation 工具（SSE）。
+    """
+    record = record if isinstance(record, dict) else {}
+    access = str(record.get("access") or "").strip()
+    if not access:
+        raise account_core.AccountError("expired")
+    extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
+    account_id = str(extra.get("chatgpt_account_id") or "").strip() or _account_id(access)
+    if not account_id:
+        raise account_core.AccountError("generic", "账号信息不完整，重新连接一次")
+    prompt_text = str(prompt or "").strip()
+    if not prompt_text:
+        raise account_core.AccountError("generic", "画图描述是空的")
+    model_name = str(model or "").strip() or IMAGE_MODEL
+    size_text = str(size or "").strip() or "1024x1024"
+    try:
+        limit = float(timeout or IMAGE_TIMEOUT)
+    except (TypeError, ValueError):
+        limit = IMAGE_TIMEOUT
+    limit = max(5.0, min(600.0, limit))
+
+    primary_error: account_core.AccountError | None = None
+    try:
+        data = account_core.http_json(
+            IMAGES_URL,
+            {
+                "model": model_name,
+                "prompt": prompt_text,
+                "size": size_text,
+                "n": 1,
+            },
+            headers=_image_headers(access, account_id),
+            timeout=limit,
+            label="ChatGPT 画图",
+            error_map=IMAGE_ERROR_MAP,
+            secrets_=(access,),
+        )
+        images = _images_from_payload(data, limit)
+        if images:
+            return images
+        primary_error = account_core.AccountError(
+            "generic", "ChatGPT 画图没有返回图片，稍后再试"
+        )
+    except account_core.AccountError as e:
+        if e.code == "expired":
+            try:
+                account_core.mark_expired(ID)
+            except Exception:
+                pass
+            raise
+        primary_error = e
+
+    # 兜底：responses + image_generation 工具
+    try:
+        fallback = _generate_images_via_responses(
+            prompt_text, size_text, limit, access, account_id
+        )
+    except account_core.AccountError as e:
+        if e.code == "expired":
+            try:
+                account_core.mark_expired(ID)
+            except Exception:
+                pass
+            raise
+        if primary_error is not None:
+            raise primary_error from e
+        raise
+    if fallback:
+        return fallback
+    if primary_error is not None:
+        raise primary_error
+    raise account_core.AccountError("generic", "ChatGPT 画图没有返回图片，稍后再试")
+
+
 # ---------------------------------------------------------------- 刷新 / 聊天
 
 
@@ -520,3 +780,105 @@ def label(record: dict) -> str | None:
         return account
     email = _email(str(record.get("access") or ""))
     return email or None
+
+
+# ---------------------------------------------------------------- 识图（账号额度）
+
+
+def _image_mime(data: bytes) -> str:
+    """按文件头识别图片 mime（识别不了按 JPEG）。"""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def describe_images(
+    record: dict,
+    model: str,
+    images: list,
+    prompt: str = "请描述这些图片",
+    timeout: float = 60,
+    max_tokens: int = 700,
+) -> str:
+    """用账号额度识图：Codex responses 的 input_image（data URL）+ input_text。"""
+    access = str(record.get("access") or "").strip()
+    if not access:
+        raise account_core.AccountError("expired")
+    extra = record.get("extra") if isinstance(record.get("extra"), dict) else {}
+    account_id = str(extra.get("chatgpt_account_id") or "").strip() or _account_id(access)
+    if not account_id:
+        raise account_core.AccountError("generic", "账号信息不完整，重新连接一次")
+    model_name = str(model or "").strip() or DEFAULT_MODEL
+
+    prepared: list[bytes] = []
+    for raw in list(images or [])[:4]:
+        if not isinstance(raw, (bytes, bytearray)):
+            raise account_core.AccountError("generic", "图片格式不对，再试一次")
+        data = bytes(raw)
+        if data:
+            prepared.append(data)
+    if not prepared:
+        raise account_core.AccountError("generic", "没有图片可以识别")
+
+    content: list[dict] = [{"type": "input_text", "text": str(prompt or "").strip() or "请描述这些图片"}]
+    for data in prepared:
+        mime = _image_mime(data)
+        b64 = base64.b64encode(data).decode("ascii")
+        content.append({"type": "input_image", "image_url": f"data:{mime};base64,{b64}"})
+
+    try:
+        max_out = int(max_tokens) if max_tokens else 0
+    except (TypeError, ValueError):
+        max_out = 0
+    payload = {
+        "model": model_name,
+        "store": False,
+        "stream": True,
+        "instructions": "You are a helpful assistant that describes images.",
+        "input": [{"role": "user", "content": content}],
+        "text": {"verbosity": "low"},
+        "include": ["reasoning.encrypted_content"],
+        "tool_choice": "auto",
+        "parallel_tool_calls": True,
+    }
+    if max_out > 0:
+        payload["max_output_tokens"] = max_out
+
+    headers = {
+        "Authorization": f"Bearer {access}",
+        "chatgpt-account-id": account_id,
+        "OpenAI-Beta": "responses=experimental",
+        "originator": ORIGINATOR,
+        "accept": "text/event-stream",
+        "content-type": "application/json",
+        "User-Agent": account_core.BROWSER_USER_AGENT,
+    }
+    error_map = {
+        401: ("expired", None),
+        403: ("expired", None),
+        429: ("generic", "请求太频繁或额度用完了，稍后再试"),
+    }
+    try:
+        events = account_core.post_sse(
+            API_URL,
+            payload,
+            headers=headers,
+            timeout=float(timeout or CHAT_TIMEOUT),
+            label="ChatGPT",
+            error_map=error_map,
+            secrets_=(access,),
+        )
+    except account_core.AccountError as e:
+        if e.code == "expired":
+            account_core.mark_expired(ID)
+        raise
+    text = _extract_text(events)
+    if not text:
+        raise account_core.AccountError("generic", "ChatGPT 没有返回图片描述，再试一次")
+    return text

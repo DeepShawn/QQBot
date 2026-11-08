@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import base64
 import time
 import urllib.parse
 
@@ -194,6 +195,99 @@ def _headers(access: str) -> dict:
 def _account_max_tokens(model: str) -> int:
     """账号订阅模式不限制输出：Claude 要求显式 max_tokens，这里给模型的最大输出。"""
     return 8192 if "haiku" in str(model or "").lower() else 32000
+
+
+def _image_mime(data: bytes) -> str:
+    """按文件头识别图片 mime（识别不了按 JPEG）。"""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def describe_images(
+    record: dict,
+    model: str,
+    images: list,
+    prompt: str = "请描述这些图片",
+    timeout: float = 60,
+    max_tokens: int = 700,
+) -> str:
+    """用账号额度识图：Anthropic messages 里的 image block（base64）+ 文本。"""
+    access = str(record.get("access") or "").strip()
+    if not access:
+        raise account_core.AccountError("expired")
+    prepared: list[bytes] = []
+    for raw in list(images or [])[:4]:
+        if not isinstance(raw, (bytes, bytearray)):
+            raise account_core.AccountError("generic", "图片格式不对，再试一次")
+        data = bytes(raw)
+        if data:
+            prepared.append(data)
+    if not prepared:
+        raise account_core.AccountError("generic", "没有图片可以识别")
+
+    model_name = str(model or "").strip() or DEFAULT_MODEL
+    blocks: list[dict] = [{"type": "text", "text": str(prompt or "").strip() or "请描述这些图片"}]
+    for data in prepared:
+        blocks.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": _image_mime(data),
+                    "data": base64.b64encode(data).decode("ascii"),
+                },
+            }
+        )
+    try:
+        max_out = int(max_tokens) if max_tokens else 0
+    except (TypeError, ValueError):
+        max_out = 0
+    if max_out <= 0:
+        max_out = 700
+    payload = {
+        "model": model_name,
+        "max_tokens": max_out,
+        "messages": [{"role": "user", "content": blocks}],
+        "system": [{"type": "text", "text": CLAUDE_CODE_SYSTEM}],
+    }
+    error_map = {
+        401: ("expired", None),
+        403: ("expired", None),
+        429: ("generic", "请求太频繁或额度用完了，稍后再试"),
+    }
+    try:
+        result = account_core.http_json(
+            API_URL,
+            payload,
+            headers=_headers(access),
+            timeout=float(timeout or CHAT_TIMEOUT),
+            label="Claude",
+            error_map=error_map,
+            allow_error_body=True,
+            secrets_=(access,),
+        )
+    except account_core.AccountError as e:
+        if e.code == "expired":
+            account_core.mark_expired(ID)
+        raise
+    content = result.get("content")
+    if not isinstance(content, list):
+        raise account_core.AccountError("generic", "Claude 返回的格式看不懂，再试一次")
+    text = "".join(
+        str(block.get("text") or "")
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text"
+    ).strip()
+    if not text:
+        raise account_core.AccountError("generic", "Claude 没有返回图片描述，再试一次")
+    return text
 
 
 def chat(

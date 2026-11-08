@@ -311,8 +311,9 @@ def sanitize_config(cfg: dict) -> dict:
     ai = plugins.setdefault("ai_chat", {})
     _clamp_int(ai, "max_tokens", 64, 8192, 4096)
     _clamp_float(ai, "temperature", 0.0, 2.0, 0.7)
-    _clamp_int(ai, "max_history", 1, 100, 8)
-    _clamp_int(ai, "history_ttl_minutes", 1, 10080, 30)
+    # 0 / 负数 = 不限制轮数 / 永不过期（记忆“不遗忘”）
+    _clamp_int(ai, "max_history", 0, 1000, 8)
+    _clamp_int(ai, "history_ttl_minutes", 0, 525600, 30)
     _clamp_int(ai, "cooldown_seconds", 0, 600, 3)
     _clamp_int(ai, "max_output_chars", 50, 4000, 800)
     vis = ai.setdefault("vision", {})

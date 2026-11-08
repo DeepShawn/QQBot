@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import io
 import json
 import re
 import time
@@ -18,6 +20,7 @@ import urllib.error
 import urllib.request
 
 import files as files_mod
+import imagegen
 import media
 import providers
 import pytool
@@ -38,6 +41,37 @@ LOCAL_PYTHON_NO_TOOL_HINT = (
     "用户要运行代码时，可以请有权限的管理员发 /py <代码> 或 /run <文件名>，"
     "不要说自己完全没有运行能力。"
 )
+
+# 画图能力提示（追加到 system prompt）
+LOCAL_IMAGE_TOOL_HINT = (
+    "【画图工具】用户要画图/生成图片/来一张图时，自己调用 generate_image 工具；"
+    "不要把画图推回给用户，也不要写代码或用 SVG 画图。"
+)
+
+IMAGE_TOOL_NAME = "generate_image"
+IMAGE_SIZES = ("1024x1024", "1024x1792", "1792x1024")
+IMAGE_TOOL_SPEC = {
+    "type": "function",
+    "function": {
+        "name": IMAGE_TOOL_NAME,
+        "description": (
+            "用户要画图/生成图片/来一张图时调用；不要用代码画图（也不要写 SVG 画图代码），"
+            "直接生成图片发出去。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "prompt": {"type": "string", "description": "画面描述"},
+                "size": {
+                    "type": "string",
+                    "enum": list(IMAGE_SIZES),
+                    "description": "图片尺寸，可选，默认 1024x1024",
+                },
+            },
+            "required": ["prompt"],
+        },
+    },
+}
 
 PYTHON_TOOL_NAME = "run_python"
 PYTHON_TOOL_SPEC = {
@@ -61,6 +95,17 @@ PYTHON_TOOL_SPEC = {
     },
 }
 MAX_TOOL_ROUNDS = 3
+ROUTE_MAX_HISTORY = 6
+ROUTE_MAX_TOKENS = 300
+
+ROUTE_SYSTEM_HEAD = (
+    "你是工具路由器。只判断用户这句话是否需要用工具，不要回答用户问题，不要解释。\n"
+    "可用工具：\n"
+)
+ROUTE_SYSTEM_FORMAT = (
+    "\n输出要求：只输出一个严格 JSON 对象（不要代码块、不要多余文字）：\n"
+)
+ROUTE_SYSTEM_NONE = '· 不需要工具：{"tool":"none"}\n'
 
 
 def local_python_hint(ctx, tool_available: bool = False) -> str:
@@ -229,19 +274,32 @@ class Plugin(PluginBase):
     def _history(self, key: str) -> list:
         self._load_if_changed()
         cfg = self.ctx.plugin_cfg("ai_chat")
-        ttl = float(cfg.get("history_ttl_minutes", 30)) * 60
+        try:
+            ttl_minutes = float(cfg.get("history_ttl_minutes", 30))
+        except (TypeError, ValueError):
+            ttl_minutes = 30.0
+        ttl = ttl_minutes * 60
         item = self.history.get(key)
-        if item and (time.time() - item["ts"]) > ttl:
+        # ttl <= 0 表示永不过期（用户选择「不遗忘」，0 和负数都算）
+        if item and ttl > 0 and (time.time() - item["ts"]) > ttl:
             self.history.pop(key, None)
             item = None
         return item["messages"] if item else []
 
     def _remember(self, key: str, role: str, content: str):
         cfg = self.ctx.plugin_cfg("ai_chat")
-        max_msgs = int(cfg.get("max_history", 8)) * 2
+        try:
+            max_turns = int(cfg.get("max_history", 8))
+        except (TypeError, ValueError):
+            max_turns = 8
         messages = self._history(key)
         messages.append({"role": role, "content": content})
-        del messages[:-max_msgs]
+        # max_turns <= 0 表示不限制轮数、保留全部历史；注意不能写成 del messages[:-0]
+        # （切片 -0 等价于 0，会把历史清空）。
+        if max_turns > 0:
+            max_msgs = max_turns * 2
+            if len(messages) > max_msgs:
+                del messages[:-max_msgs]
         self.history[key] = {"ts": time.time(), "messages": messages}
         self._save()
 
@@ -324,16 +382,25 @@ class Plugin(PluginBase):
         if images:
             vcfg = cfg.get("vision") or {}
             if vcfg.get("enabled", True):
+                # 识图优先用 vision.api_key；没填时跟随 AI 的认证方式：
+                # 账号模式（auth 非空）走账号识图，否则沿用 AI 的 API Key。
+                vision_key = str(vcfg.get("api_key") or "").strip()
+                vision_auth = "" if vision_key else str(cfg.get("auth") or "").strip()
+                vision_api_key = vision_key or (
+                    "" if vision_auth else str(cfg.get("api_key") or "")
+                )
+                vision_model = str(vcfg.get("model") or cfg.get("model") or "").strip()
                 try:
                     desc = await asyncio.to_thread(
                         providers.describe_images,
                         provider=str(vcfg.get("provider") or cfg.get("provider") or "openai"),
                         base_url=str(vcfg.get("base_url") or cfg.get("base_url", "")),
-                        api_key=str(vcfg.get("api_key") or cfg.get("api_key", "")),
-                        model=str(vcfg.get("model") or cfg.get("model", "")),
+                        api_key=vision_api_key,
+                        model=vision_model,
                         images=images,
                         prompt=str(vcfg.get("prompt") or "请用中文客观描述这张图片，重点提取里面的文字信息。"),
                         timeout=float(vcfg.get("timeout_seconds", 60)),
+                        auth=vision_auth,
                     )
                     parts.append(f"【图片内容识别】{desc}")
                 except providers.ProviderError as e:
@@ -414,8 +481,11 @@ class Plugin(PluginBase):
         except (TypeError, ValueError):
             return pytool.DEFAULT_TIMEOUT
 
-    async def _can_use_python_tool(self, event) -> bool:
-        """私聊直接可以；群里只允许 bot.admins 或群主/群管理员。"""
+    async def _can_use_tools(self, event) -> bool:
+        """工具（run_python / generate_image）权限：私聊直接可以；
+
+        群里只允许 bot.admins 或群主/群管理员。
+        """
         if event.get("message_type") != "group":
             return True
         user_id = event.get("user_id")
@@ -444,16 +514,46 @@ class Plugin(PluginBase):
         )
         return role in ("owner", "admin")
 
-    async def _python_tools(self, event, cfg: dict) -> list | None:
-        """当前这次请求要不要给模型提供 run_python 工具。"""
+    def _python_tool_base_available(self) -> bool:
+        """python_run 插件是否允许 AI 使用 run_python（不看模型是否支持工具调用）。"""
         py_cfg = self._python_run_cfg()
-        if py_cfg.get("enabled") is False or py_cfg.get("ai_tool") is False:
+        return py_cfg.get("enabled") is not False and py_cfg.get("ai_tool") is not False
+
+    def _native_tools_supported(self, cfg: dict) -> bool:
+        """当前 profile 是否能走原生 OpenAI function calling。"""
+        if str(cfg.get("auth") or "").strip():
+            return False
+        return providers.normalize_provider(str(cfg.get("provider") or "openai")) == "openai"
+
+    def _image_gen_cfg(self) -> dict:
+        try:
+            return self.ctx.plugin_cfg("image_gen") or {}
+        except Exception:
+            return {}
+
+    def _image_tool_configured(self, cfg: dict) -> bool:
+        """image_gen 配置上是否能拿到图片 Key 或 ChatGPT 账号（不看权限）。"""
+        image_cfg = self._image_gen_cfg()
+        if image_cfg.get("enabled") is False:
+            return False
+        ai_auth = str(cfg.get("auth") or "").strip()
+        image_key = str(image_cfg.get("api_key") or "").strip()
+        ai_key = str(cfg.get("api_key") or "").strip()
+        return bool(image_key or (ai_key and not ai_auth) or ai_auth == "chatgpt")
+
+    async def _image_tool_available(self, event, cfg: dict) -> bool:
+        """图片工具可用性：配置 ok + 权限 ok。"""
+        if not self._image_tool_configured(cfg):
+            return False
+        return await self._can_use_tools(event)
+
+    async def _python_tools(self, event, cfg: dict) -> list | None:
+        """原生 function calling 下的 run_python 工具（账号/非 openai 由路由兜底）。"""
+        if not self._native_tools_supported(cfg):
             return None
-        if str(cfg.get("auth") or "").strip():  # 账号模式（Claude/ChatGPT 等）不提供
+        if not self._python_tool_base_available():
             return None
-        if providers.normalize_provider(str(cfg.get("provider") or "openai")) != "openai":
-            return None
-        if not await self._can_use_python_tool(event):
+        if not await self._can_use_tools(event):
             return None
         return [PYTHON_TOOL_SPEC]
 
@@ -501,7 +601,217 @@ class Plugin(PluginBase):
             result = {"error": "运行 Python 失败，稍后再试。"}
         return json.dumps(result, ensure_ascii=False)
 
-    async def _tool_chat(self, cfg: dict, messages: list, tools: list) -> str:
+    @staticmethod
+    def _image_segment(data: bytes) -> dict:
+        """把图片压成 JPEG + base64 消息段（参考 image_gen 插件的做法）。"""
+        payload = bytes(data or b"")
+        try:
+            from PIL import Image
+
+            image = Image.open(io.BytesIO(payload))
+            image = image.convert("RGB")
+            if max(image.size) > 1600:
+                image.thumbnail((1600, 1600))
+            out = io.BytesIO()
+            image.save(out, format="JPEG", quality=88)
+            payload = out.getvalue()
+        except Exception:
+            pass
+        return {
+            "type": "image",
+            "data": {"file": "base64://" + base64.b64encode(payload).decode("ascii")},
+        }
+
+    async def _execute_image_tool(self, event, cfg: dict, call: dict) -> str:
+        """执行一次 generate_image 调用（原生 tools 路径）。"""
+        try:
+            arguments = json.loads(str(call.get("arguments") or "{}"))
+        except Exception:
+            return json.dumps({"error": "工具参数不是合法 JSON"}, ensure_ascii=False)
+        if not isinstance(arguments, dict):
+            return json.dumps({"error": "工具参数格式不对"}, ensure_ascii=False)
+        return await self._perform_image_tool(event, cfg, arguments)
+
+    async def _perform_image_tool(
+        self, event, cfg: dict, arguments: dict
+    ) -> str:
+        """按参数生成图片 -> 直接发到当前会话 -> 返回 JSON 文本。"""
+        prompt = str(arguments.get("prompt") or "").strip()
+        if not prompt:
+            return json.dumps({"error": "需要 prompt 参数"}, ensure_ascii=False)
+        image_cfg = self._image_gen_cfg()
+        size = str(arguments.get("size") or "").strip()
+        if size not in IMAGE_SIZES:
+            size = str(image_cfg.get("size") or "").strip()
+        if size not in IMAGE_SIZES:
+            size = "1024x1024"
+        try:
+            timeout = float(image_cfg.get("timeout_seconds") or 120)
+        except (TypeError, ValueError):
+            timeout = 120.0
+        try:
+            images = await asyncio.to_thread(
+                imagegen.generate_for_ai, cfg, image_cfg, prompt, size, timeout
+            )
+        except imagegen.ImageGenError as e:
+            self.ctx.log.warning("generate_image 工具失败: %s", e)
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
+        except Exception as e:
+            self.ctx.log.warning("generate_image 工具异常: %s", e)
+            return json.dumps({"error": "画图失败，稍后再试"}, ensure_ascii=False)
+        if not images:
+            return json.dumps({"error": "画图接口没有返回图片"}, ensure_ascii=False)
+        segments = [self._image_segment(data) for data in images[:2]]
+        try:
+            if event.get("message_type") == "group":
+                await self.ctx.send_group(event.get("group_id"), segments)
+            else:
+                await self.ctx.send_private(event.get("user_id"), segments)
+        except Exception as e:
+            self.ctx.log.warning("发送 AI 生成的图片失败: %s", e)
+            return json.dumps(
+                {"error": "图片生成好了但发送失败"}, ensure_ascii=False
+            )
+        self.ctx.log.info("AI 画图完成 %d 张: %s", len(segments), prompt[:40])
+        return json.dumps(
+            {"ok": True, "count": len(segments), "note": "图片已发送"},
+            ensure_ascii=False,
+        )
+
+    # ---------------- 账号/非 OpenAI 模式的意图路由 ----------------
+    def _sync_route_chat(self, cfg: dict, messages: list) -> str:
+        """工具路由用的轻量模型调用：temperature=0、max_tokens≈300。"""
+        auth = str(cfg.get("auth") or "").strip()
+        model = str(cfg.get("model") or "").strip()
+        if not model and not auth:
+            model = "deepseek-chat"
+        return providers.chat(
+            provider=str(cfg.get("provider") or "openai"),
+            base_url=str(cfg.get("base_url", "")),
+            api_key=str(cfg.get("api_key", "")),
+            model=model,
+            messages=messages,
+            temperature=0.0,
+            max_tokens=ROUTE_MAX_TOKENS,
+            timeout=float(cfg.get("timeout_seconds", 60)),
+            auth=auth,
+        )
+
+    @staticmethod
+    def _parse_route_json(text) -> dict | None:
+        """从模型输出里取第一个完整 JSON 对象（容忍 ```json 围栏/前后文字）。"""
+        raw = str(text or "").strip()
+        if not raw:
+            return None
+        decoder = json.JSONDecoder()
+        index = raw.find("{")
+        while index >= 0:
+            try:
+                value, _end = decoder.raw_decode(raw[index:])
+            except Exception:
+                value = None
+            if isinstance(value, dict):
+                return value
+            index = raw.find("{", index + 1)
+        return None
+
+    async def _route_tool_chat(
+        self,
+        event,
+        cfg: dict,
+        messages: list,
+        history: list,
+        prompt: str,
+        image_ok: bool,
+        python_ok: bool,
+    ) -> str | None:
+        """账号/非 OpenAI 模式的「意图路由」：一次轻量 chat 判断要不要用工具。
+
+        返回最终文字回复；路由失败/不需要工具返回 None（调用方走普通聊天）。
+        """
+        tools = []
+        examples = []
+        if image_ok:
+            tools.append("generate_image（用户要画图/生成图片）")
+            examples.append(
+                '· 需要画图：{"tool":"generate_image",'
+                '"prompt":"画面描述","size":"1024x1024"}'
+            )
+        if python_ok:
+            tools.append("run_python（用户要运行代码/脚本）")
+            examples.append(
+                '· 需要运行 Python：{"tool":"run_python","code":"python 源码"} 或 '
+                '{"tool":"run_python","file":"data/files 下的 .py 文件名"}'
+            )
+        if not tools:
+            return None
+        route_messages = [
+            {
+                "role": "system",
+                "content": (
+                    ROUTE_SYSTEM_HEAD
+                    + "\n".join(tools)
+                    + ROUTE_SYSTEM_FORMAT
+                    + "\n".join(examples)
+                    + "\n"
+                    + ROUTE_SYSTEM_NONE
+                ),
+            }
+        ]
+        for item in (history or [])[-ROUTE_MAX_HISTORY:]:
+            if isinstance(item, dict) and item.get("role") in ("user", "assistant"):
+                route_messages.append(
+                    {"role": item["role"], "content": str(item.get("content") or "")}
+                )
+        route_messages.append({"role": "user", "content": str(prompt or "")})
+        try:
+            raw = await asyncio.to_thread(self._sync_route_chat, cfg, route_messages)
+        except providers.ProviderError as e:
+            self.ctx.log.info("工具路由调用失败，按普通聊天处理: %s", e)
+            return None
+        decision = self._parse_route_json(raw)
+        tool = (
+            str(decision.get("tool") or "").strip().lower()
+            if isinstance(decision, dict)
+            else ""
+        )
+        if tool == "generate_image" and image_ok:
+            arguments = {k: v for k, v in decision.items() if k != "tool"}
+            self.ctx.log.info("工具路由命中 generate_image")
+            output = await self._perform_image_tool(event, cfg, arguments)
+            result_label = "generate_image"
+        elif tool == "run_python" and python_ok:
+            arguments = {k: v for k, v in decision.items() if k != "tool"}
+            self.ctx.log.info("工具路由命中 run_python")
+            call = {
+                "name": "run_python",
+                "arguments": json.dumps(arguments, ensure_ascii=False),
+            }
+            output = await asyncio.to_thread(self._execute_python_tool, call)
+            result_label = "run_python"
+        else:
+            if tool and tool != "none":
+                self.ctx.log.info("工具路由给出不可用的工具 %s，按普通聊天处理", tool)
+            return None
+        final_messages = list(messages) + [
+            {
+                "role": "system",
+                "content": (
+                    f"【工具执行结果】{result_label}：{output}\n"
+                    "请根据以上结果用中文回复用户；不要再重复发送图片，"
+                    "也不要说自己不能运行工具。"
+                ),
+            }
+        ]
+        try:
+            final = await asyncio.to_thread(self._sync_chat, cfg, final_messages)
+        except providers.ProviderError as e:
+            self.ctx.log.info("工具结果后的最终回复失败，按普通聊天处理: %s", e)
+            return None
+        text = str(final or "").strip()
+        return text or None
+
+    async def _tool_chat(self, event, cfg: dict, messages: list, tools: list) -> str:
         """最多 3 轮工具循环：tool_calls -> 执行 -> role=tool 结果回给模型。"""
         working = [dict(item) for item in messages]
         last_content = ""
@@ -537,7 +847,11 @@ class Plugin(PluginBase):
             )
             for index, call in enumerate(calls):
                 call_id = assistant_calls[index]["id"]
-                output = await asyncio.to_thread(self._execute_python_tool, call)
+                name = str(call.get("name") or "").strip()
+                if name == IMAGE_TOOL_NAME:
+                    output = await self._execute_image_tool(event, cfg, call)
+                else:
+                    output = await asyncio.to_thread(self._execute_python_tool, call)
                 working.append(
                     {"role": "tool", "tool_call_id": call_id, "content": output}
                 )
@@ -687,14 +1001,28 @@ class Plugin(PluginBase):
                 return True
             return False
 
-        tools = await self._python_tools(event, cfg)
+        # 原生 function calling 只支持 OpenAI 兼容 + API Key；账号/其它 provider 用意图路由。
+        native_supported = self._native_tools_supported(cfg)
+        python_ok = self._python_tool_base_available() and await self._can_use_tools(event)
+        image_ok = await self._image_tool_available(event, cfg)
+        tools: list = []
+        if native_supported:
+            if python_ok:
+                tools.append(PYTHON_TOOL_SPEC)
+            if image_ok:
+                tools.append(IMAGE_TOOL_SPEC)
 
         system = self.ctx.format_text(cfg.get("system_prompt", ""), event, group_id=group_id)
-        hint = local_python_hint(self.ctx, bool(tools))
-        if hint:
-            system = (str(system).rstrip() + "\n\n" + hint).strip()
-        messages = [{"role": "system", "content": system}]
-        messages += self._history(key)
+        hints = []
+        py_hint = local_python_hint(self.ctx, python_ok)
+        if py_hint:
+            hints.append(py_hint)
+        if image_ok:
+            hints.append(LOCAL_IMAGE_TOOL_HINT)
+        if hints:
+            system = (str(system).rstrip() + "\n\n" + "\n\n".join(hints)).strip()
+        history_messages = self._history(key)
+        messages = [{"role": "system", "content": system}] + history_messages
 
         # 附件（图片视觉识别 / 文件文本抽取）
         extra_blocks = []
@@ -725,11 +1053,26 @@ class Plugin(PluginBase):
         try:
             if tools:
                 try:
-                    answer = await self._tool_chat(cfg, messages, tools)
+                    answer = await self._tool_chat(event, cfg, messages, tools)
                 except providers.ProviderError as e:
                     # 有的 OpenAI 兼容中转/本地模型不接受 tools 参数：退回普通聊天，
                     # 不因此让原本能用的对话失败
-                    self.ctx.log.warning("run_python 工具调用失败，退回普通聊天: %s", e)
+                    self.ctx.log.warning("工具调用失败，退回普通聊天: %s", e)
+                    answer = await asyncio.to_thread(self._sync_chat, cfg, messages)
+            elif not native_supported and (python_ok or image_ok):
+                # 账号 / 非 OpenAI 模式：用一次轻量「意图路由」让模型自己决定要不要用工具
+                routed = await self._route_tool_chat(
+                    event,
+                    cfg,
+                    messages,
+                    history_messages,
+                    prompt,
+                    image_ok,
+                    python_ok,
+                )
+                if routed:
+                    answer = routed
+                else:
                     answer = await asyncio.to_thread(self._sync_chat, cfg, messages)
             else:
                 answer = await asyncio.to_thread(self._sync_chat, cfg, messages)

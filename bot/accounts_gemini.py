@@ -769,6 +769,98 @@ def _consume_stream(response) -> str:
     return text
 
 
+def _image_mime(data: bytes) -> str:
+    """按文件头识别图片 mime（识别不了按 JPEG）。"""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def describe_images(
+    record,
+    model,
+    images,
+    prompt="请描述这些图片",
+    timeout=60,
+    max_tokens=700,
+) -> str:
+    """用账号额度识图：contents parts 里放文本 + inlineData 图片块。"""
+    record = record or {}
+    access = record.get("access")
+    if not isinstance(access, str) or not access:
+        raise AccountError("not-signed-in", "还没有连接这个账号")
+    prepared: list[bytes] = []
+    for raw in list(images or [])[:4]:
+        if not isinstance(raw, (bytes, bytearray)):
+            raise AccountError("generic", "图片格式不对，再试一次")
+        data = bytes(raw)
+        if data:
+            prepared.append(data)
+    if not prepared:
+        raise AccountError("generic", "没有图片可以识别")
+
+    project = _record_project(record)
+    if not project:
+        project, _tier = _setup_project(access)
+    model_name = str(model or "").strip() or DEFAULT_MODEL
+
+    parts: list[dict] = [{"text": str(prompt or "").strip() or "请描述这些图片"}]
+    for data in prepared:
+        parts.append(
+            {
+                "inlineData": {
+                    "mimeType": _image_mime(data),
+                    "data": base64.b64encode(data).decode("ascii"),
+                }
+            }
+        )
+    request: dict = {
+        "contents": [{"role": "user", "parts": parts}],
+        "session_id": str(uuid.uuid4()),
+    }
+    generation_config: dict = {"temperature": 0.2}
+    try:
+        limit = int(max_tokens) if max_tokens else 0
+    except (TypeError, ValueError):
+        limit = 0
+    if limit > 0:
+        generation_config["maxOutputTokens"] = limit
+    request["generationConfig"] = generation_config
+
+    payload: dict = {
+        "model": model_name,
+        "user_prompt_id": str(uuid.uuid4()),
+        "request": request,
+    }
+    if project:
+        payload["project"] = project
+    url = "%s/%s:streamGenerateContent?alt=sse" % (
+        CODE_ASSIST_ENDPOINT,
+        CODE_ASSIST_API_VERSION,
+    )
+    headers = {
+        "Authorization": "Bearer " + access,
+        "Content-Type": "application/json",
+        "User-Agent": _client_user_agent(model_name),
+    }
+    request_timeout = int(timeout) if timeout else 120
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    response = _open_stream(url, body, headers, timeout=request_timeout)
+    try:
+        text = _consume_stream(response)
+    finally:
+        _close_quietly(response)
+    if not text:
+        raise AccountError("generic", "Gemini 没有返回图片描述，再试一次")
+    return text
+
+
 def chat(record, model, messages, temperature, max_tokens, timeout) -> str:
     record = record or {}
     access = record.get("access")

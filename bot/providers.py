@@ -12,7 +12,8 @@
     chat_with_tools(*, provider, base_url, api_key, model, messages, tools,
                     temperature=0.7, max_tokens=2000, timeout=60.0) -> dict
     describe_images(*, provider, base_url, api_key, model, images,
-                    prompt="...", timeout=60.0, max_tokens=700) -> str
+                    prompt="...", timeout=60.0, max_tokens=700,
+                    auth="") -> str
 
 统一约定：
 - messages 用 OpenAI 格式：role 只能是 system / user / assistant，content 是 str。
@@ -618,6 +619,39 @@ def chat_with_tools(
     return _parse_tool_completion(data)
 
 
+def _describe_images_with_account(
+    auth_id: str,
+    model: str,
+    images: list[bytes],
+    prompt: str,
+    timeout: float,
+    max_tokens: int,
+) -> str:
+    """账号模式识图：懒加载 accounts_<id>，用账号额度调该账号的多模态接口。"""
+    try:
+        import account_core
+    except Exception as e:  # pragma: no cover - 账号核心缺失时给出可操作提示
+        raise ProviderError("账号识图暂时不可用，改填视觉 API Key") from e
+    try:
+        module = account_core.load_provider(auth_id)
+    except account_core.AccountError as e:
+        if e.code == "unsupported":
+            raise ProviderError("这个账号还不支持识图，改填视觉 API Key") from e
+        raise ProviderError(e.message) from e
+    describe = getattr(module, "describe_images", None)
+    if not callable(describe):
+        raise ProviderError("这个账号还不支持识图，改填视觉 API Key")
+    try:
+        record = account_core.ensure_access(auth_id)
+    except account_core.AccountError as e:
+        raise ProviderError(e.message) from e
+    try:
+        text = describe(record, model, images, prompt, timeout, max_tokens)
+    except account_core.AccountError as e:
+        raise ProviderError(e.message) from e
+    return str(text or "")
+
+
 def describe_images(
     *,
     provider: str,
@@ -628,8 +662,38 @@ def describe_images(
     prompt: str = "请用中文描述这张图片，重点提取文字。",
     timeout: float = 60.0,
     max_tokens: int = 700,
+    auth: str = "",
 ) -> str:
-    """把 1~4 张图交给对应厂商的多模态接口，返回文字描述；失败抛 ProviderError。"""
+    """把 1~4 张图交给对应厂商的多模态接口，返回文字描述；失败抛 ProviderError。
+
+    auth 非空时走账号额度（accounts_<auth>.describe_images），忽略
+    provider / base_url / api_key；auth 为空保持原来的 API Key 逻辑。
+    """
+    if images is None or not isinstance(images, (list, tuple)):
+        raise ProviderError("images 必须是 bytes 列表")
+    if not images:
+        return ""
+
+    prepared_raw: list[bytes] = []
+    for raw in list(images)[:MAX_IMAGES]:
+        if not isinstance(raw, (bytes, bytearray)):
+            raise ProviderError("images 里每张图必须是 bytes")
+        prepared_raw.append(bytes(raw))
+
+    auth_id = str(auth or "").strip().lower()
+    if auth_id:
+        max_out = _as_int(max_tokens, "max_tokens")
+        timeout_s = _timeout_value(timeout)
+        text_prompt = str(prompt or "").strip() or "请描述这些图片"
+        return _describe_images_with_account(
+            auth_id,
+            str(model or "").strip(),
+            prepared_raw,
+            text_prompt,
+            timeout_s,
+            max_out,
+        )
+
     name = _check_provider(provider)
     model_name = _require_model(model)
     key = _clean_api_key(api_key)
@@ -638,16 +702,9 @@ def describe_images(
     timeout_s = _timeout_value(timeout)
     text_prompt = str(prompt or "")
 
-    if images is None or not isinstance(images, (list, tuple)):
-        raise ProviderError("images 必须是 bytes 列表")
-    if not images:
-        return ""
-
     prepared: list[tuple[bytes, str]] = []
-    for raw in list(images)[:MAX_IMAGES]:
-        if not isinstance(raw, (bytes, bytearray)):
-            raise ProviderError("images 里每张图必须是 bytes")
-        prepared.append(_prepare_image(bytes(raw)))
+    for raw in prepared_raw:
+        prepared.append(_prepare_image(raw))
 
     if name == "openai":
         content: list[dict] = [{"type": "text", "text": text_prompt}]

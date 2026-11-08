@@ -191,12 +191,53 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
         }
 
         group("记忆") {
-            EditPreference("记住几轮对话", ai.opt("max_history")?.toString() ?: "8", numeric = true) {
-                it.toIntOrNull()?.let { v -> Store.patch(patchOf("plugins", "ai_chat", "max_history", value = v.coerceIn(1, 100))) }
+            // 0 = 不限制轮数 / 永不忘记（后端 T20 支持）；两个都为 0 就是「永久记忆」
+            val maxHistory = Store.int("config", "plugins", "ai_chat", "max_history", def = 8)
+            val ttlMinutes = Store.int("config", "plugins", "ai_chat", "history_ttl_minutes", def = 30)
+            val forever = maxHistory == 0 && ttlMinutes == 0
+
+            top.yukonga.miuix.kmp.preference.SwitchPreference(
+                title = "永久记忆（不限制轮数、不遗忘）",
+                summary = if (forever) "已开启：记住所有轮次，永不自动遗忘" else "关闭：默认记住 8 轮、30 分钟后忘记",
+                checked = forever,
+                onCheckedChange = { on ->
+                    scope.launch {
+                        val values = JSONObject()
+                        if (on) {
+                            values.put("max_history", 0)
+                            values.put("history_ttl_minutes", 0)
+                        } else {
+                            values.put("max_history", 8)
+                            values.put("history_ttl_minutes", 30)
+                        }
+                        Store.patch(
+                            patchOf("plugins", "ai_chat", value = values),
+                            if (on) "已开启永久记忆" else "已恢复默认记忆（8 轮 / 30 分钟）",
+                        )
+                    }
+                },
+            )
+            EditPreference(
+                "记住几轮对话",
+                maxHistory.toString(),
+                summary = "0 = 不限制轮数（永久记住）",
+                numeric = true,
+            ) {
+                it.toIntOrNull()?.let { v ->
+                    Store.patch(patchOf("plugins", "ai_chat", "max_history", value = v.coerceIn(0, 1000)))
+                }
             }
-            EditPreference("多久后忘掉（分钟）", ai.opt("history_ttl_minutes")?.toString() ?: "30", numeric = true) {
-                it.toIntOrNull()?.let { v -> Store.patch(patchOf("plugins", "ai_chat", "history_ttl_minutes", value = v.coerceIn(1, 10080))) }
+            EditPreference(
+                "多久后忘掉（分钟）",
+                ttlMinutes.toString(),
+                summary = "0 = 永不忘记",
+                numeric = true,
+            ) {
+                it.toIntOrNull()?.let { v ->
+                    Store.patch(patchOf("plugins", "ai_chat", "history_ttl_minutes", value = v.coerceIn(0, 525600)))
+                }
             }
+            Hint("对话记忆按「群 / 私聊的人」保存，和当前模型无关；换模型后仍记得前面聊过什么。清空记忆用下面的按钮。")
             ArrowPreference(
                 title = "清空所有对话记忆",
                 onClick = { scope.launch { com.qqbot.console.Api.post("/api/context/clear"); Store.toast = "已清空" } },

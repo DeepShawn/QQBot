@@ -1,7 +1,9 @@
 """文生图插件：私聊发「画一张…」、群里 @机器人 发「画一张…」，生成图片并发到会话。
 
 - provider: openai 兼容（OpenAI/DALL·E/gpt-image-1/中转站）或 gemini
-- 未单独配置 base_url/api_key 时，自动跟随 plugins.ai_chat 的配置
+- 触发词可以是句中的任意位置；prompt 取触发词之后的文字（没有则去掉触发词后的全文）
+- 配置优先级：image_gen.api_key → AI 的 Key（ai_chat.api_key 且 auth 为空）
+  → 账号画图（ai_chat.auth，目前只支持 ChatGPT）→ 未配置提示
 - push_groups: 生成后额外推送到这些群
 """
 from __future__ import annotations
@@ -45,9 +47,18 @@ class Plugin(PluginBase):
             return None
         for trigger in cfg.get("triggers") or []:
             trigger = str(trigger)
-            if trigger and text.startswith(trigger):
-                prompt = text[len(trigger):].lstrip("：: ，,。.").strip()
-                return prompt or None
+            if not trigger:
+                continue
+            index = text.find(trigger)
+            if index < 0:
+                continue
+            after = text[index + len(trigger):].lstrip("：: ，,。.！!？?~～").strip()
+            if after:
+                return after
+            # 触发词后面没内容：退回去掉触发词后的全文（去空白）
+            rest = (text[:index] + text[index + len(trigger):]).strip()
+            rest = rest.strip("：: ，,。.！!？?~～").strip()
+            return rest or None
         return None
 
     # ---------------- 生成并发送 ----------------
@@ -69,16 +80,39 @@ class Plugin(PluginBase):
             pass
         return {"type": "image", "data": {"file": "base64://" + base64.b64encode(payload).decode("ascii")}}
 
-    def _generate_sync(self, cfg: dict, ai_cfg: dict, prompt: str) -> list[bytes]:
+    def _generate_sync(self, cfg: dict, ai_cfg: dict, prompt: str, api_key: str) -> list[bytes]:
         return imagegen.generate(
             provider=str(cfg.get("provider") or "openai"),
             base_url=str(cfg.get("base_url") or ai_cfg.get("base_url") or ""),
-            api_key=str(cfg.get("api_key") or ai_cfg.get("api_key") or ""),
+            api_key=api_key,
             model=str(cfg.get("model") or "gpt-image-1"),
             prompt=prompt,
             size=str(cfg.get("size") or "1024x1024"),
             timeout=float(cfg.get("timeout_seconds", 120)),
         )
+
+    def _generate_account_sync(self, auth: str, cfg: dict, prompt: str) -> list[bytes]:
+        """账号额度画图（目前只有 ChatGPT）：忽略 provider/base_url。"""
+        return imagegen.generate_with_account(
+            auth,
+            prompt,
+            size=str(cfg.get("size") or "1024x1024"),
+            timeout=float(cfg.get("timeout_seconds", 120)),
+        )
+
+    @staticmethod
+    def _resolve_mode(cfg: dict, ai_cfg: dict) -> tuple[str, str]:
+        """返回 ("api", key) / ("account", auth) / ("none", "")。"""
+        image_key = str(cfg.get("api_key") or "").strip()
+        ai_auth = str(ai_cfg.get("auth") or "").strip()
+        ai_key = str(ai_cfg.get("api_key") or "").strip()
+        if image_key:
+            return "api", image_key
+        if ai_key and not ai_auth:
+            return "api", ai_key
+        if ai_auth:
+            return "account", ai_auth
+        return "none", ""
 
     async def _send_images(self, event, caption: str, segments: list[dict], cfg: dict):
         message = [text_seg(caption)] if caption else []
@@ -111,20 +145,31 @@ class Plugin(PluginBase):
 
         user_id = event.get("user_id")
         ai_cfg = self.ctx.plugin_cfg("ai_chat")
-        if not str(cfg.get("api_key") or ai_cfg.get("api_key") or "").strip():
-            await self.ctx.reply(event, "[画图未配置] 先在控制台「画图」页填 API Key（或复用 AI 的 Key）。")
+        mode, value = self._resolve_mode(cfg, ai_cfg)
+        if mode == "none":
+            await self.ctx.reply(
+                event,
+                "[画图未配置] 先在控制台「画图」页填 API Key，或连接 ChatGPT 账号。",
+            )
             return True
 
-        self.ctx.log.info("文生图请求 %s: %s", user_id, prompt[:60])
+        self.ctx.log.info("文生图请求 %s mode=%s: %s", user_id, mode, prompt[:60])
         try:
-            images = await asyncio.to_thread(self._generate_sync, cfg, ai_cfg, prompt)
+            if mode == "account":
+                images = await asyncio.to_thread(
+                    self._generate_account_sync, value, cfg, prompt
+                )
+            else:
+                images = await asyncio.to_thread(
+                    self._generate_sync, cfg, ai_cfg, prompt, value
+                )
         except imagegen.ImageGenError as e:
             self.ctx.log.warning("文生图失败: %s", e)
             await self.ctx.reply(event, f"画图失败：{e}")
             return True
         except Exception as e:
             self.ctx.log.exception("文生图异常")
-            await self.ctx.reply(event, f"画图异常：{e}")
+            await self.ctx.reply(event, "画图出了点问题，稍后再试。")
             return True
 
         if not images:
