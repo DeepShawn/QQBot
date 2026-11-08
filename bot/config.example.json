@@ -1,0 +1,202 @@
+{
+  "onebot": {
+    "ws_url": "ws://127.0.0.1:3001",
+    "access_token": "",
+    "reconnect_seconds": 5,
+    "request_timeout": 20
+  },
+  "bot": {
+    "name": "大肥鱼",
+    "admins": [],
+    "log_level": "INFO",
+    "self_id": 0
+  },
+  "plugins": {
+    "keyword": {
+      "enabled": true,
+      "group_require_at": true,
+      "group_at_sender": true,
+      "contains_max_len": 12,
+      "cooldown_seconds": 2,
+      "rules": [
+        {
+          "name": "打招呼",
+          "keywords": [
+            "你好",
+            "在吗",
+            "hi",
+            "hello"
+          ],
+          "match": "contains",
+          "scope": "all",
+          "reply": "你好呀 {nickname}，我是{bot_name}，有什么可以帮你？"
+        },
+        {
+          "name": "帮助",
+          "keywords": [
+            "/help",
+            "#帮助",
+            "帮助"
+          ],
+          "match": "exact",
+          "scope": "all",
+          "reply": "可用功能：\n1) 关键词问答\n2) @我 聊天（AI）\n3) 群管理（欢迎/违禁词）\n发 /help 看这条。"
+        },
+        {
+          "name": "群规",
+          "keywords": [
+            "群规",
+            "规则"
+          ],
+          "match": "exact",
+          "scope": "group",
+          "reply": "本群群规：友善交流、禁止广告、禁止刷屏。违规会被撤回/禁言。"
+        }
+      ]
+    },
+    "ai_chat": {
+      "enabled": true,
+      "profiles": [
+        {
+          "id": "default",
+          "name": "DeepSeek 官方",
+          "provider": "openai",
+          "base_url": "https://api.deepseek.com/v1",
+          "api_key": "",
+          "model": "deepseek-chat",
+          "temperature": 0.7,
+          "max_tokens": 4096
+        }
+      ],
+      "active_profile": "default",
+      "provider": "openai",
+      "base_url": "https://api.deepseek.com/v1",
+      "api_key": "",
+      "model": "deepseek-chat",
+      "temperature": 0.7,
+      "max_tokens": 1600,
+      "timeout_seconds": 60,
+      "system_prompt": "你是 QQ 群里的机器人 {bot_name}，说话简短、口语化，像群友一样。回答控制在 120 字以内，不要用 Markdown 标题，不要暴露自己是 AI 模型。",
+      "trigger": {
+        "private": true,
+        "group_at": true,
+        "group_name_aliases": [],
+        "group_quote": true,
+        "group_followup_seconds": 120,
+        "group_prefix": []
+      },
+      "max_history": 8,
+      "history_ttl_minutes": 30,
+      "cooldown_seconds": 3,
+      "group_whitelist": [],
+      "group_blacklist": [],
+      "at_sender": true,
+      "reply_quote": false,
+      "files": {
+        "enabled": true,
+        "min_lines": 15,
+        "min_chars": 400,
+        "max_files": 3,
+        "note": "📎 完整代码已保存成文件发出：{names}"
+      },
+      "attachments": {
+        "enabled": true,
+        "max_images": 3,
+        "max_file_bytes": 15000000,
+        "max_file_chars": 4000
+      },
+      "search": {
+        "enabled": true,
+        "provider": "auto",
+        "max_results": 5,
+        "always": false,
+        "trigger_keywords": [
+          "搜索",
+          "搜一下",
+          "帮我搜",
+          "帮我查",
+          "查一下",
+          "查查",
+          "最新",
+          "最近",
+          "今天",
+          "新闻",
+          "天气",
+          "股价",
+          "多少钱",
+          "是谁",
+          "什么时候"
+        ]
+      },
+      "vision": {
+        "enabled": true,
+        "provider": "",
+        "base_url": "",
+        "api_key": "",
+        "model": "",
+        "timeout_seconds": 60,
+        "prompt": "请用中文客观描述这张图片，重点提取里面的文字信息。"
+      }
+    },
+    "image_gen": {
+      "enabled": true,
+      "provider": "openai",
+      "base_url": "",
+      "api_key": "",
+      "model": "gpt-image-1",
+      "size": "1024x1024",
+      "triggers": [
+        "画一张",
+        "画个",
+        "画只",
+        "画一幅",
+        "生成图片",
+        "生图",
+        "img:"
+      ],
+      "push_groups": [],
+      "caption": "🎨 画好了"
+    },
+    "group_admin": {
+      "enabled": true,
+      "admin_commands": true,
+      "admin_mute_seconds": 300,
+      "welcome": {
+        "enabled": true,
+        "groups": [],
+        "template": "欢迎 {at} 加入本群～ 有问题 @ 我"
+      },
+      "badwords": {
+        "enabled": true,
+        "groups": [],
+        "words": [
+          "加群",
+          "广告",
+          "代刷",
+          "赌博",
+          "兼职日结"
+        ],
+        "regex_words": [],
+        "action": "recall+mute",
+        "mute_seconds": 300,
+        "ignore_admins": false,
+        "ignore_users": [],
+        "warn_text": "{at} 发言包含违禁词，已处理。"
+      },
+      "flood": {
+        "enabled": true,
+        "groups": [],
+        "max_messages": 8,
+        "max_images": 5,
+        "window_seconds": 10,
+        "action": "mute",
+        "mute_seconds": 120,
+        "ignore_admins": false,
+        "ignore_users": [],
+        "warn_text": "{at} 刷屏了，禁言 {mute_seconds} 秒。"
+      },
+      "recall_on_ban": true
+    }
+  },
+  "ai_chat": {}
+}

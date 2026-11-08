@@ -1,0 +1,1313 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"><meta name="theme-color" content="#0b0f14"><title>QQ 机器人控制台</title><style>:root{--bg:#0b0f14;--bg2:#0f151c;--card:#151c25;--card2:#1b2430;--line:#26303d;--text:#e8eef5;--muted:#93a1b3;--accent:#4c8dff;--accent2:#2f6fe0;--green:#3fb950;--red:#f85149;--amber:#d29922;--radius:14px}*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;padding:0;background:var(--bg);color:var(--text)}html{}body{font-family:system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif;font-size:15px;line-height:1.5;min-height:100vh;overflow-x:hidden;overscroll-behavior-y:contain;padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}[hidden]{display:none!important}pre,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Noto Sans Mono CJK SC",monospace}#topbar{position:sticky;top:0;z-index:30;display:flex;align-items:center;gap:8px;padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 10px;background:rgba(11,15,20,.94);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}#topbar .logo{font-size:18px;line-height:1}#topbar h1{font-size:16px;font-weight:600;margin:0;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.top-dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex:0 0 auto}.top-dot.ok{background:var(--green);box-shadow:0 0 0 3px rgba(63,185,80,.18)}.top-dot.warn{background:var(--amber);box-shadow:0 0 0 3px rgba(210,153,34,.18)}.top-dot.bad{background:var(--red);box-shadow:0 0 0 3px rgba(248,81,73,.18)}#views{padding:12px 12px 8px;max-width:640px;margin:0 auto}.view{display:none}.view.active{display:block}.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px}.card-title{font-size:14px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}.fold{padding:0;overflow:hidden}.fold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:6px;padding:14px;font-size:14px;font-weight:600;user-select:none;-webkit-user-select:none}.fold>summary::-webkit-details-marker{display:none}.fold>summary .chev{margin-left:auto;color:var(--muted);font-size:12px;transform:rotate(-90deg);transition:transform .15s}.fold[open]>summary .chev{transform:rotate(0)}.fold>.fold-body{padding:0 14px 14px}.fold>summary .badge{font-size:11px;font-weight:400;color:var(--muted)}.field{margin-bottom:12px;min-width:0}.field:last-child{margin-bottom:0}.field label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}input:not([type=checkbox]),select,textarea{width:100%;max-width:100%;background:var(--bg2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:16px;font-family:inherit;line-height:1.4;outline:none}input:not([type=checkbox]):focus,select:focus,textarea:focus{border-color:var(--accent)}select{-webkit-appearance:none;appearance:none;padding-right:34px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%2393a1b3' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}textarea{min-height:96px;resize:vertical}.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}.grid2 .field{margin-bottom:0}.hint{font-size:12px;color:var(--muted);margin:8px 0 0;line-height:1.55;word-break:break-word}.small{font-size:12px}.muted{color:var(--muted)}.mt8{margin-top:8px}.spacer{flex:1}.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:44px;padding:0 14px;border-radius:12px;border:1px solid var(--line);background:var(--card2);color:var(--text);font-size:15px;font-weight:500;font-family:inherit;cursor:pointer;transition:opacity .15s,transform .05s}.btn:active{transform:scale(.98)}.btn:disabled{opacity:.45}.btn.primary{background:linear-gradient(180deg,#4c8dff,#2f6fe0);border-color:transparent;color:#fff}.btn.danger{background:rgba(248,81,73,.14);border-color:rgba(248,81,73,.5);color:#ff9a94}.btn.warn{background:rgba(210,153,34,.14);border-color:rgba(210,153,34,.5);color:#f0c458}.btn.ghost{background:transparent}.btn.tiny{min-height:32px;padding:0 10px;font-size:13px;border-radius:9px}.btn.block{width:100%;margin:2px 0 12px}.btn-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}.link-danger{color:#ff7b72;text-decoration:underline}.login-hint{margin:10px 0 4px;padding:10px 12px;border:1px solid rgba(227,179,65,.35);background:rgba(227,179,65,.08);border-radius:10px}.login-hint .small{margin-top:4px;color:var(--muted);line-height:1.55}.svc-master{display:flex;align-items:center;gap:10px;margin:2px 0 12px}.svc-state{font-size:17px;font-weight:700}.svc-state.on{color:var(--green)}.svc-state.off{color:var(--red)}.svc-state.warn{color:#e3b341}.svc-main{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}.svc-main .btn{min-height:50px;font-size:16px}.svc-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 0;border-top:1px solid rgba(255,255,255,.06);flex-wrap:wrap}.svc-name{display:flex;align-items:center;gap:10px;min-width:0}.svc-name small{display:block;font-size:12px;color:var(--muted);font-weight:400}.svc-btns{display:flex;gap:6px}.status-dot.warn{background:#e3b341;box-shadow:0 0 0 4px rgba(227,179,65,.15)}.row-gap{display:flex;gap:8px;align-items:center}.row-gap input{flex:1;min-width:0}.row-between{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}.row-between .card-title{margin-bottom:0}.prof-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:4px}.preset-box{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:10px;margin:8px 0 4px;max-height:280px;overflow:auto;overscroll-behavior:contain}.preset-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}.preset-item{display:block;width:100%;text-align:left;background:var(--card2);border:1px solid var(--line);border-radius:9px;padding:9px 10px;color:var(--text);font-family:inherit;cursor:pointer}.preset-item .p-name{font-size:13px;font-weight:600}.preset-item .p-meta{font-size:11px;color:var(--muted);line-height:1.45;word-break:break-all;margin-top:2px}.hero-on{box-shadow:inset 0 0 0 1px rgba(63,185,80,.28)}.hero-off{box-shadow:inset 0 0 0 1px rgba(248,81,73,.28)}.hero-top{display:flex;align-items:center;gap:8px;margin-bottom:12px}.status-dot{width:12px;height:12px;border-radius:50%;background:var(--muted);flex:0 0 auto}.status-dot.on{background:var(--green);box-shadow:0 0 0 4px rgba(63,185,80,.15)}.status-dot.off{background:var(--red);box-shadow:0 0 0 4px rgba(248,81,73,.15)}.status-text{font-size:18px;font-weight:700}.status-text.on{color:var(--green)}.status-text.off{color:var(--red)}.kv-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.kv{background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:9px 11px;min-width:0}.kv span{display:block;font-size:12px;color:var(--muted);margin-bottom:2px}.kv b{font-size:15px;font-weight:600;word-break:break-all}.val.ok{color:var(--green)}.val.bad{color:var(--red)}code.url{display:block;flex:1;min-width:0;background:#0a0e13;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:11px;color:#9fb3c8;word-break:break-all;line-height:1.45}.log-preview,.logbox{background:#0a0e13;border:1px solid var(--line);border-radius:10px;padding:10px;margin:0;font-size:12px;line-height:1.55;color:#b9c7d6;white-space:pre-wrap;word-break:break-all;overflow:auto;overscroll-behavior:contain}.log-preview{max-height:150px}.logbox{max-height:calc(100vh - 220px);max-height:calc(100dvh - 220px);font-size:11px;min-height:180px}.switch-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 0;cursor:pointer;position:relative}.switch-row span{font-size:15px;flex:1;min-width:0}.switch-row input{position:absolute;inset:0;width:100%;height:100%;opacity:0;margin:0;cursor:pointer;z-index:1}.switch-row i{position:relative;flex:0 0 auto;width:48px;height:28px;border-radius:14px;background:#2b3644;transition:background .18s}.switch-row i::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .18s}.switch-row input:checked + i{background:var(--accent)}.switch-row input:checked + i::after{transform:translateX(20px)}.switch-row input:focus-visible + i{outline:2px solid var(--accent);outline-offset:2px}.rule-card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}.rule-head{display:flex;align-items:center;gap:6px;margin-bottom:10px}.rule-no{font-size:12px;color:var(--muted)}.icon-btn{width:32px;height:32px;border-radius:8px;border:1px solid var(--line);background:var(--card2);color:var(--text);font-size:13px;line-height:1;cursor:pointer;padding:0;flex:0 0 auto}.icon-btn:disabled{opacity:.3}.icon-btn.del{color:#ff9a94;border-color:rgba(248,81,73,.4)}.ctx-list{display:flex;flex-direction:column;gap:8px}.ctx-item{border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--bg2)}.ctx-head{width:100%;display:flex;align-items:center;gap:6px;background:none;border:none;color:var(--text);font-family:inherit;font-size:14px;padding:11px 12px;text-align:left;cursor:pointer;flex-wrap:wrap}.ctx-title{font-weight:600}.ctx-sub{font-size:12px;color:var(--muted)}.ctx-head .chev{color:var(--muted);font-size:12px}.ctx-body{border-top:1px solid var(--line);padding:10px 10px 12px;display:flex;flex-direction:column;gap:8px;max-height:340px;overflow:auto;overscroll-behavior:contain}.msg{display:flex}.msg.user{justify-content:flex-end}.msg.assistant{justify-content:flex-start}.bubble{max-width:80%;border-radius:12px;padding:8px 11px;font-size:14px;line-height:1.5;word-break:break-word;overflow-wrap:anywhere;white-space:pre-wrap}.msg.user .bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px}.msg.assistant .bubble{background:var(--card2);border:1px solid var(--line);color:var(--text);border-bottom-left-radius:4px}.bubble-time{font-size:10px;opacity:.7;margin-top:4px;text-align:right}.msg.assistant .bubble-time{text-align:left}.empty{color:var(--muted);font-size:13px;text-align:center;padding:18px 0;margin:0}.empty.err{color:#ff9a94}#tabbar{position:fixed;left:0;right:0;bottom:0;z-index:40;display:grid;grid-template-columns:repeat(7,1fr);background:rgba(15,21,28,.97);backdrop-filter:blur(12px);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom,0px)}.tabbtn{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;background:none;border:none;color:var(--muted);font-family:inherit;padding:8px 0 7px;font-size:10px;line-height:1.2;min-width:0;cursor:pointer}.tabbtn .ico{font-size:18px;line-height:1}.tabbtn .lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.tabbtn.active{color:var(--accent)}#splash{position:fixed;inset:0;z-index:90;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:var(--bg);color:var(--muted);font-size:14px}.spinner{width:34px;height:34px;border-radius:50%;border:3px solid #22303f;border-top-color:var(--accent);animation:spin .9s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}#offline{position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--bg)}.offline-card{width:100%;max-width:360px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px 18px;text-align:center}.offline-card .big{font-size:40px;line-height:1;margin-bottom:10px}.offline-card h2{font-size:17px;margin:0 0 8px}.offline-card p{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.6;word-break:break-word}.offline-card code{display:block;background:#0a0e13;border:1px solid var(--line);border-radius:9px;padding:10px;font-size:12px;color:#c7d6e6;word-break:break-all;margin:0 0 12px;text-align:left}.offline-card .err{font-size:11px;color:#ff9a94;margin:0 0 10px;word-break:break-all}.toast{position:fixed;left:50%;bottom:calc(74px + env(safe-area-inset-bottom,0px));transform:translate(-50%,12px);z-index:95;max-width:88vw;padding:11px 16px;border-radius:12px;font-size:14px;font-weight:500;text-align:center;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;background:#1f7a37;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,.45);word-break:break-word}.toast.show{opacity:1;transform:translate(-50%,0)}.toast.err{background:#b3302b}#modal{position:fixed;inset:0;z-index:97;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.62)}.modal-card{width:100%;max-width:330px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px 18px}.modal-card h3{font-size:16px;margin:0 0 8px}.modal-card p{font-size:13px;color:var(--muted);margin:0 0 18px;line-height:1.6;word-break:break-word}.modal-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}</style></head><body><header id="topbar"><span class="logo">🤖</span><h1>QQ 机器人控制台</h1><span class="top-dot" id="topDot" title="连接状态"></span></header><main id="views"><section class="view active" data-view="overview"><div class="card hero-on" id="heroCard"><div class="hero-top"><span class="status-dot" id="statusDot"></span><span class="status-text" id="statusText">加载中…</span><span class="spacer"></span><span class="muted small" id="lastRefresh"></span></div><div class="kv-grid"><div class="kv"><span>PID</span><b id="ovPid">—</b></div><div class="kv"><span>QQ 号</span><b id="ovSelfId">—</b></div><div class="kv"><span>运行时长</span><b id="ovUptime">—</b></div><div class="kv"><span>OneBot</span><b id="ovWs">—</b></div></div></div><div class="card"><div class="card-title">协议层</div><div class="kv-grid"><div class="kv"><span>QQ 进程</span><b id="ovQq">—</b></div><div class="kv"><span>WS 通道</span><b id="ovWsOpen">—</b></div><div class="kv"><span>登录 QQ</span><b id="ovLoginUin">—</b></div></div><div id="loginHint" class="login-hint" hidden><b>⚠️ 协议层未就绪</b><div class="small" id="loginHintText">QQ 正在启动或未登录。首次/掉登录时需要扫码或密码登录一次，之后会记住并自动登录。</div><div class="row-gap mt8"><button class="btn tiny ghost" id="btnGoLogin">去登录（打开 NapCat 登录页）</button><button class="btn tiny ghost" id="btnNoAutoLogin">不再自动打开</button></div></div><div class="field mt8"><label>NapCat WebUI</label><div class="row-gap"><code class="url" id="ovWebui">—</code><button class="btn tiny ghost" id="btnCopyWebui">复制</button></div></div></div><div class="card"><div class="card-title">服务控制</div><div class="svc-master"><span class="status-dot" id="svcDot"></span><span class="svc-state" id="svcState">—</span></div><div class="svc-main"><button class="btn primary" id="btnAllStart">▶ 开启服务</button><button class="btn danger" id="btnAllStop">■ 关闭服务</button></div><p class="hint" style="margin-top:-6px">「开启/关闭服务」只启停机器人，QQ 协议层保持在线，所以开关是秒级的、不用重新扫码。要连 QQ 一起关请用下面的「协议层 → 停止」，或者点 <a href="javascript:void(0)" id="btnAllOff" class="link-danger">彻底关闭</a>（下次开启需重新登录验证）。</p><div class="svc-row"><div class="svc-name"><span class="status-dot" id="svcProtoDot"></span><span>协议层<small>QQ + NapCat</small></span></div><div class="svc-btns"><button class="btn tiny ghost" data-act="protocol_start">启动</button><button class="btn tiny ghost" data-act="protocol_stop">停止</button><button class="btn tiny ghost" data-act="protocol_restart">重启</button></div></div><div class="svc-row"><div class="svc-name"><span class="status-dot" id="svcBotDot"></span><span>机器人<small>插件 / AI</small></span></div><div class="svc-btns"><button class="btn tiny ghost" data-act="bot_start" id="btnStart">启动</button><button class="btn tiny ghost" data-act="bot_stop" id="btnStop">停止</button><button class="btn tiny ghost" data-act="bot_restart" id="btnRestart">重启</button></div></div><div class="card-title mt8">自动守护</div><label class="switch-row"><span>机器人挂了自动拉起</span><input type="checkbox" id="ctlAutoBot"><i></i></label><label class="switch-row"><span>协议层挂了自动拉起</span><input type="checkbox" id="ctlAutoProto"><i></i></label><p class="hint">手动「关闭服务 / 停止」后不会被自动拉起。关闭服务后这个页面仍可使用（管理服务独立运行），随时可以再开启。协议层启动最长约 3 分钟；如果手机环境被重置，会先自动修复环境，耗时更长。</p></div><div class="card"><div class="card-title">最近日志 <span class="muted small">（最新 8 行）</span></div><pre class="log-preview" id="logPreview">—</pre></div></section><section class="view" data-view="ai"><div class="card"><div class="card-title">接口配置</div><div class="field"><label>当前接口（下拉切换要编辑的一套）</label><select id="profileSelect"></select></div><div class="prof-actions"><button class="btn tiny ghost" id="btnProfileUse">设为当前</button><button class="btn tiny ghost" id="btnProfileAdd">新增</button><button class="btn tiny ghost" id="btnProfileDel">删除</button><button class="btn tiny ghost" id="btnPresetOpen">+ 从预设添加</button></div><div id="presetBox" class="preset-box" hidden><div class="row-between"><span class="muted small">选择预设服务商（只读，不会改已有配置）</span><button class="btn tiny ghost" id="btnPresetClose">收起</button></div><div id="presetList" class="preset-list"><p class="empty">加载中…</p></div></div><p class="hint">可以保存多套接口（官方 / 中转站 / Claude / Gemini），一键切换；任意一套都能单独配 key 和模型。</p></div><div class="card"><div class="card-title">模型接口</div><div class="field"><label>接口类型 provider</label><select id="aiProvider"><option value="openai">OpenAI 兼容（含 ChatGPT / 中转站）</option><option value="claude">Claude</option><option value="gemini">Gemini</option></select></div><div class="field"><label>接口地址 base_url</label><input id="aiBaseUrl" placeholder="https://api.deepseek.com/v1"><p class="hint">中转站：把中转站的 /v1 地址填到接口地址。</p></div><div class="field"><label>模型 model</label><input id="aiModel" placeholder="deepseek-chat"><p class="hint" id="modelHint" hidden></p></div><div class="field"><label>API Key</label><div class="row-gap"><input id="aiKey" type="password"><button class="btn tiny ghost" id="btnToggleKey">显示</button></div><p class="hint" id="keyHint">支持任何 OpenAI 兼容接口。已保存的密钥不回显明文，留空表示不修改。</p></div><div class="grid2"><div class="field"><label>温度 temperature（0–2）</label><input id="aiTemp" type="number" step="0.1"></div><div class="field"><label>max_tokens</label><input id="aiMaxTokens" type="number" placeholder="64~8192（默认 4096）"></div></div></div><div class="card"><div class="card-title">人格提示词</div><div class="field"><textarea id="aiPrompt" placeholder="你是 QQ 群里的机器人…"></textarea><p class="hint">可用占位符：{bot_name}（机器人名）、{nickname}、{group_name} 等，发送时由后端替换。</p></div></div><div class="card"><div class="card-title">触发设置</div><label class="switch-row"><span>私聊消息自动回复</span><input type="checkbox" id="aiPrivate"><i></i></label><label class="switch-row"><span>群里必须 @ 机器人才回复</span><input type="checkbox" id="aiGroupAt"><i></i></label><label class="switch-row"><span>@ 一次后继续对话</span><input type="checkbox" id="aiFollowupOn"><i></i></label><div class="field" id="aiFollowupSecField" hidden><label>连续对话时长（秒，10–3600）</label><input id="aiFollowSec" type="number" placeholder="120"></div><p class="hint">关闭 = 每次都要 @/叫名字/引用它才会回；打开 = 唤醒后 N 秒内这个人继续说话也会回。</p></div><div class="card"><div class="card-title">上下文</div><div class="grid2"><div class="field"><label>记忆轮数 max_history</label><input id="aiMaxHistory" type="number"></div><div class="field"><label>过期分钟 history_ttl</label><input id="aiTtl" type="number"></div></div><p class="hint">max_history 是每个会话保留的对话轮数；超过 history_ttl 分钟的会话记忆会自动过期。</p></div><details class="card fold" id="visionFold"><summary><span>👁️ 视觉识别</span><span class="badge" id="visionState"></span><span class="chev">▾</span></summary><div class="fold-body"><label class="switch-row"><span>开启图片理解</span><input type="checkbox" id="viEnabled"><i></i></label><div class="field mt8"><label>接口类型 provider</label><select id="viProvider"><option value="">跟随主配置</option><option value="openai">OpenAI 兼容</option><option value="claude">Claude</option><option value="gemini">Gemini</option></select></div><div class="field"><label>接口地址 base_url</label><input id="viBaseUrl" placeholder="跟随主配置"></div><div class="field"><label>模型 model</label><input id="viModel" placeholder="跟随主配置"></div><div class="field"><label>API Key</label><div class="row-gap"><input id="viKey" type="password"><button class="btn tiny ghost" id="btnToggleViKey">显示</button></div><p class="hint" id="viKeyHint">留空 = 跟随主配置的 API Key；已保存的密钥不回显明文。</p></div><div class="field"><label>识别提示词 prompt</label><textarea id="viPrompt" placeholder="请用中文客观描述这张图片…"></textarea><p class="hint">图片会先交给视觉模型识别，识别结果再交给主模型回答。</p></div></div></details><div class="card"><div class="card-title">🔎 联网搜索</div><label class="switch-row"><span>开启联网搜索</span><input type="checkbox" id="seEnabled"><i></i></label><div class="grid2 mt8"><div class="field"><label>搜索来源</label><select id="seProvider"><option value="auto">自动</option><option value="duckduckgo">仅 DuckDuckGo</option><option value="bing">仅 Bing</option></select></div><div class="field"><label>结果数 max_results</label><input id="seMaxResults" type="number"></div></div><label class="switch-row"><span>每条消息都搜索（always）</span><input type="checkbox" id="seAlways"><i></i></label><div class="field mt8"><label>触发词（逗号分隔）</label><input id="seKeywords" placeholder="搜索, 搜一下, 最新, 新闻"></div><p class="hint">关闭 always 时，只有消息里包含触发词才会联网搜索；搜索结果会作为上下文交给 AI。</p></div><div class="card"><div class="card-title">📎 附件处理</div><label class="switch-row"><span>开启附件（图片 / 文件）处理</span><input type="checkbox" id="atEnabled"><i></i></label><div class="grid2 mt8"><div class="field"><label>最多图片数 max_images</label><input id="atMaxImages" type="number"></div><div class="field"><label>单文件字符上限 max_file_chars</label><input id="atMaxChars" type="number"></div></div><div class="field"><label>单文件大小上限 max_file_bytes（字节）</label><input id="atMaxBytes" type="number" step="100000"><p class="hint" id="atMaxBytesHint"></p></div><p class="hint">图片交给「视觉识别」处理；文本文件按字符上限截断后再交给 AI。</p></div><button class="btn primary block" id="btnSaveAI">保存 AI 设置</button></section><section class="view" data-view="rules"><div class="card"><label class="switch-row"><span>群里必须 @ 才触发关键词</span><input type="checkbox" id="kwRequireAt"><i></i></label><p class="hint">关闭后，群里任何消息只要命中关键词都会回复。匹配方式选 regex 时，关键词按正则表达式处理（多个用 | 连接）。</p></div><div id="rulesList"></div><button class="btn ghost block" id="btnAddRule">＋ 新增规则</button><button class="btn primary block" id="btnSaveRules">保存回复规则</button></section><section class="view" data-view="group"><div class="card"><div class="card-title">👋 入群欢迎</div><label class="switch-row"><span>开启入群欢迎</span><input type="checkbox" id="gaWelcomeOn"><i></i></label><div class="field mt8"><label>欢迎语模板</label><textarea id="gaWelcomeTpl" placeholder="欢迎 {at} 加入本群～"></textarea><p class="hint">{at} 表示 @ 新成员，还可使用 {nickname}、{group_name} 等占位符。</p></div></div><div class="card"><div class="card-title">🚫 违禁词</div><label class="switch-row"><span>开启违禁词检测</span><input type="checkbox" id="gaBadOn"><i></i></label><div class="field mt8"><label>违禁词（逗号分隔）</label><input id="gaBadWords" placeholder="加群, 广告, 代刷"></div><div class="field"><label>正则违禁词（逗号/换行分隔，可留空）</label><input id="gaBadRegex" placeholder="广告.*链接, 加群\s*送"><p class="hint">按正则匹配，适合关键词变化多的场景；留空表示不启用正则。</p></div><div class="grid2"><div class="field"><label>处理动作</label><select id="gaBadAction"><option value="recall+mute">撤回 + 禁言</option><option value="recall">仅撤回</option><option value="mute">仅禁言</option><option value="kick">踢出</option><option value="recall+mute+kick">撤回 + 禁言 + 踢出</option></select></div><div class="field"><label>禁言秒数</label><input id="gaBadMute" type="number"></div></div><div class="field"><label>提示文案</label><textarea id="gaBadWarn" placeholder="{at} 发言包含违禁词，已处理。"></textarea></div><label class="switch-row"><span>豁免群主 / 管理员</span><input type="checkbox" id="gaBadIgnoreAdmins"><i></i></label><p class="hint">开启后群主和管理员发的违禁词不处理。</p><div class="field"><label>豁免的 QQ 号（逗号分隔，可留空）</label><input id="gaBadIgnoreUsers" placeholder="123456789, 987654321"><p class="hint">这些人的消息不触发违禁词规则。</p></div></div><div class="card"><div class="card-title">🌊 防刷屏</div><label class="switch-row"><span>开启防刷屏</span><input type="checkbox" id="gaFloodOn"><i></i></label><div class="grid2 mt8"><div class="field"><label>时间窗内消息数</label><input id="gaFloodMax" type="number"></div><div class="field"><label>时间窗（秒）</label><input id="gaFloodWindow" type="number"></div></div><div class="grid2"><div class="field"><label>禁言秒数</label><input id="gaFloodMute" type="number"></div></div><div class="field"><label>提示文案</label><textarea id="gaFloodWarn" placeholder="{at} 刷屏了，禁言 {mute_seconds} 秒。"></textarea></div><label class="switch-row"><span>豁免群主 / 管理员</span><input type="checkbox" id="gaFloodIgnoreAdmins"><i></i></label><p class="hint">开启后群主和管理员刷屏不处理。</p><div class="field"><label>豁免的 QQ 号（逗号分隔，可留空）</label><input id="gaFloodIgnoreUsers" placeholder="123456789, 987654321"><p class="hint">这些人的消息不触发防刷屏规则。</p></div></div><button class="btn primary block" id="btnSaveGroup">保存群管理设置</button></section><section class="view" data-view="image"><div class="card"><div class="card-title">🎨 画图</div><label class="switch-row"><span>开启画图功能</span><input type="checkbox" id="imgEnabled"><i></i></label><p class="hint">在私聊给机器人发「画一张…」，或在群里 @它 发「画一张…」即可出图。</p></div><div class="card"><div class="card-title">接口</div><div class="field"><label>接口类型 provider</label><select id="imgProvider"><option value="openai">OpenAI 兼容（DALL·E / 中转站）</option><option value="gemini">Gemini</option></select></div><div class="field"><label>接口地址 base_url</label><input id="imgBaseUrl" placeholder="跟随 AI 配置"><p class="hint">留空 = 跟随 AI 页的接口地址。</p></div><div class="field"><label>模型 model</label><input id="imgModel" placeholder="跟随 AI 配置"></div><div class="field"><label>API Key</label><div class="row-gap"><input id="imgKey" type="password"><button class="btn tiny ghost" id="btnToggleImgKey">显示</button></div><p class="hint" id="imgKeyHint">留空 = 跟随 AI 页的 API Key；已保存的密钥不回显明文。</p></div><div class="field"><label>图片尺寸 size</label><select id="imgSize"><option value="1024x1024">1024×1024（正方形）</option><option value="1024x1792">1024×1792（竖图）</option><option value="1792x1024">1792×1024（横图）</option><option value="512x512">512×512（小图）</option></select></div></div><div class="card"><div class="card-title">触发与推送</div><div class="field"><label>触发词（逗号分隔）</label><input id="imgTriggers" placeholder="画一张, 画个, 生成图片, 生图"></div><div class="field"><label>推送到群号（逗号分隔，可留空）</label><input id="imgPushGroups" placeholder="123456789, 987654321"><p class="hint">留空 = 不主动推送图片到群里；私聊出图不受影响。</p></div><div class="field"><label>出图提示文案 caption</label><input id="imgCaption" placeholder="🎨 画好了"></div></div><button class="btn primary block" id="btnSaveImage">保存画图设置</button></section><section class="view" data-view="context"><div class="card"><div class="row-between"><div class="card-title">会话 <span class="muted small" id="ctxTotal"></span></div><button class="btn tiny ghost" id="btnCtxRefresh">刷新</button></div><div id="ctxList" class="ctx-list"><p class="empty">加载中…</p></div></div><button class="btn danger block" id="btnClearCtx">清空全部上下文</button><p class="hint" style="text-align:center">清空后所有会话的 AI 记忆都会被删除，无法恢复。</p></section><section class="view" data-view="logs"><div class="card"><div class="row-between"><div class="card-title">最近 300 行</div><div class="row-gap"><button class="btn tiny ghost" id="btnLogsRefresh">刷新</button><button class="btn tiny ghost" id="btnLogsClean">清理日志</button></div></div><p class="hint" id="diskInfo">日志超 20MB 会自动截断，旧日志保留 3 天，画图保留最近 100 张。</p><pre class="logbox" id="logBox">加载中…</pre></div></section></main><nav id="tabbar"><button class="tabbtn active" data-tab="overview"><span class="ico">📊</span><span class="lbl">概览</span></button><button class="tabbtn" data-tab="ai"><span class="ico">🧠</span><span class="lbl">AI</span></button><button class="tabbtn" data-tab="rules"><span class="ico">💬</span><span class="lbl">回复规则</span></button><button class="tabbtn" data-tab="group"><span class="ico">🛡️</span><span class="lbl">群管理</span></button><button class="tabbtn" data-tab="image"><span class="ico">🎨</span><span class="lbl">画图</span></button><button class="tabbtn" data-tab="context"><span class="ico">🗂️</span><span class="lbl">上下文</span></button><button class="tabbtn" data-tab="logs"><span class="ico">📜</span><span class="lbl">日志</span></button></nav><div id="splash"><div class="spinner"></div><div>正在连接管理服务…</div></div><div id="offline" hidden><div class="offline-card"><div class="big">📴</div><h2>管理服务未启动</h2><p>请在手机里运行：</p><code>cd ~/workspace/qqbot &amp;&amp; ./start-all.sh</code><p class="err" id="offlineErr"></p><p>服务启动后页面会每 5 秒自动重试。</p><button class="btn primary block" id="btnRetry">重试</button></div></div><div class="toast" id="toast"></div><div id="modal" hidden><div class="modal-card"><h3 id="modalTitle"></h3><p id="modalText"></p><div class="modal-actions"><button class="btn ghost" id="modalCancel">取消</button><button class="btn danger" id="modalOk">确定</button></div></div></div><script>(function () {
+'use strict';
+var $ = function (id) { return document.getElementById(id); };
+var S = {
+state: null,
+tab: 'overview',
+formsFilled: false,
+offline: false,
+pollTimer: null,
+actionsBusy: false,
+apiKeyMask: '',
+apiKeySet: false,
+visionKeySet: false,
+imageKeySet: false,
+aiBase: null,
+imgBase: null,
+profiles: [],
+activeProfile: '',
+profileSel: '',
+presets: null,
+ctlDirty: false,
+sessions: [],
+openSessions: {},
+rules: [],
+lastPreview: 0
+};
+function esc(s) {
+return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+});
+}
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+function clock(d) { return pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds()); }
+function fmtUptime(sec) {
+sec = Math.max(0, Math.floor(Number(sec) || 0));
+var d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600),
+m = Math.floor((sec % 3600) / 60), s = sec % 60;
+if (d > 0) return d + ' 天 ' + h + ' 小时';
+if (h > 0) return h + ' 小时 ' + m + ' 分';
+if (m > 0) return m + ' 分 ' + s + ' 秒';
+return s + ' 秒';
+}
+function fmtTime(ts) {
+if (ts == null || ts === '') return '';
+var n = Number(ts);
+if (!isFinite(n) || n <= 0) return '';
+if (n < 1e12) n = n * 1000;
+var d = new Date(n);
+if (isNaN(d.getTime())) return '';
+return pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+function splitWords(text) {
+var seen = {};
+return String(text == null ? '' : text).split(/[,，、\n]/).map(function (w) {
+return w.trim();
+}).filter(function (w) {
+if (!w || seen[w]) return false;
+seen[w] = 1;
+return true;
+});
+}
+function parseGroupList(text) {
+return splitWords(text).map(function (w) {
+return /^\d+$/.test(w) ? Number(w) : w;
+});
+}
+function parseQQList(text) {
+var list = [], bad = [];
+splitWords(text).forEach(function (w) {
+if (/^\d+$/.test(w)) list.push(Number(w)); else bad.push(w);
+});
+return { list: list, bad: bad };
+}
+function deepCopy(x) { return JSON.parse(JSON.stringify(x)); }
+function legacyProfiles(ai) {
+return [{
+id: ai.active_profile || 'default',
+name: '默认接口',
+provider: ai.provider || 'openai',
+base_url: ai.base_url || '',
+api_key: ai.api_key || '',
+model: ai.model || '',
+temperature: ai.temperature != null ? ai.temperature : 0.7,
+max_tokens: ai.max_tokens != null ? ai.max_tokens : 4096
+}];
+}
+function getProfile(id) {
+for (var i = 0; i < S.profiles.length; i++) {
+if (S.profiles[i].id === id) return S.profiles[i];
+}
+return null;
+}
+function newProfileId() {
+var id = 'profile_' + Date.now();
+var n = 1;
+while (getProfile(id)) { id = 'profile_' + (Date.now() + n); n++; }
+return id;
+}
+function collectProfileForm() {
+return {
+provider: $('aiProvider').value,
+base_url: $('aiBaseUrl').value.trim(),
+model: $('aiModel').value.trim(),
+temperature: Number($('aiTemp').value),
+max_tokens: Number($('aiMaxTokens').value)
+};
+}
+var toastTimer = null;
+function toast(msg, type) {
+var el = $('toast');
+el.textContent = msg;
+el.className = 'toast show ' + (type === 'err' ? 'err' : 'ok');
+clearTimeout(toastTimer);
+toastTimer = setTimeout(function () {
+el.className = 'toast' + (type === 'err' ? ' err' : '');
+}, 2000);
+}
+function api(path, opts) {
+opts = opts || {};
+var ctrl = null, timer = null;
+try { ctrl = new AbortController(); } catch (e) { ctrl = null; }
+if (ctrl) timer = setTimeout(function () { try { ctrl.abort(); } catch (e) {} }, opts.timeout || 8000);
+var init = {
+method: opts.method || 'GET',
+cache: 'no-store',
+headers: {},
+signal: ctrl ? ctrl.signal : undefined
+};
+if (opts.body !== undefined) {
+init.headers['Content-Type'] = 'application/json';
+init.body = JSON.stringify(opts.body);
+}
+return fetch(path, init).then(function (res) {
+return res.text().then(function (txt) {
+var data = null;
+try { data = txt ? JSON.parse(txt) : null; } catch (e) { data = null; }
+if (!res.ok) {
+return { ok: false, status: res.status, error: (data && data.error) || ('HTTP ' + res.status) };
+}
+if (data && data.ok === false) {
+var detail = data.error || data.message || data.output || '';
+detail = String(detail).trim().slice(0, 200);
+return { ok: false, status: res.status, error: detail || '请求失败' };
+}
+return { ok: true, status: res.status, data: data };
+});
+}).catch(function (err) {
+var msg = '网络连接失败';
+if (err && err.name === 'AbortError') msg = '请求超时';
+return { ok: false, status: 0, error: msg };
+}).then(function (r) {
+if (timer) clearTimeout(timer);
+return r;
+});
+}
+function showOffline(msg) {
+if (msg) $('offlineErr').textContent = '错误：' + msg;
+if (S.offline) return;
+S.offline = true;
+$('offline').hidden = false;
+}
+function hideOffline() {
+S.offline = false;
+$('offline').hidden = true;
+}
+function setVal(el, on, onText, offText) {
+el.textContent = on ? (onText || '已连接') : (offText || '未连接');
+el.className = 'val ' + (on ? 'ok' : 'bad');
+}
+function renderState(st) {
+var bot = st.bot || {};
+var proto = st.protocol || {};
+var running = !!bot.running;
+$('statusText').textContent = running ? '运行中' : '已停止';
+$('statusText').className = 'status-text ' + (running ? 'on' : 'off');
+$('statusDot').className = 'status-dot ' + (running ? 'on' : 'off');
+$('heroCard').className = 'card ' + (running ? 'hero-on' : 'hero-off');
+$('ovPid').textContent = bot.pid != null && bot.pid !== 0 ? String(bot.pid) : '—';
+$('ovSelfId').textContent = bot.self_id != null && String(bot.self_id) !== '' && String(bot.self_id) !== '0'
+? String(bot.self_id) : '—';
+$('ovUptime').textContent = running ? fmtUptime(bot.uptime_seconds) : '—';
+setVal($('ovWs'), !!bot.connected, '已连接', '未连接');
+setVal($('ovQq'), !!proto.qq_running, '运行中', '未运行');
+setVal($('ovWsOpen'), !!proto.ws_open, '已打开', '未打开');
+$('ovLoginUin').textContent = proto.login_uin ? String(proto.login_uin) : '—';
+var disk = st.disk || {};
+if (disk.free_gb != null) {
+$('diskInfo').textContent = '磁盘剩余 ' + disk.free_gb + ' / ' + disk.total_gb +
+' GB · 日志超 20MB 自动截断，旧日志留 3 天，画图留最近 100 张';
+}
+var needLogin = !!proto.need_login;
+$('loginHint').hidden = !needLogin;
+S.loginUrl = proto.webui_url || '';
+maybeAutoOpenLogin(needLogin);
+var url = proto.webui_url || '';
+$('ovWebui').textContent = url || '—';
+$('ovWebui').dataset.url = url;
+$('btnCopyWebui').disabled = !url;
+var dot = $('topDot');
+dot.className = 'top-dot ' + (running && bot.connected ? 'ok' : (running ? 'warn' : 'bad'));
+dot.title = running ? (bot.connected ? '运行中，已连接 OneBot' : '运行中，但未连接 OneBot') : '已停止';
+var protoUp = !!proto.qq_running && !!proto.ws_open;
+var protoPartial = !!proto.qq_running && !proto.ws_open;
+$('svcProtoDot').className = 'status-dot ' + (protoUp ? 'on' : (protoPartial ? 'warn' : 'off'));
+$('svcBotDot').className = 'status-dot ' + (running && bot.connected ? 'on' : (running ? 'warn' : 'off'));
+var allUp = protoUp && running && bot.connected;
+var allDown = !proto.qq_running && !running;
+var stTxt = allUp ? '服务已开启' : (allDown ? '服务已关闭' : (protoPartial ? '协议层未就绪（未登录或启动中）' : '部分服务在运行'));
+$('svcState').textContent = stTxt;
+$('svcState').className = 'svc-state ' + (allUp ? 'on' : (allDown ? 'off' : 'warn'));
+$('svcDot').className = 'status-dot ' + (allUp ? 'on' : (allDown ? 'off' : 'warn'));
+var ctl = st.control || {};
+if (!S.ctlDirty) {
+$('ctlAutoBot').checked = ctl.auto_restart_bot !== false;
+$('ctlAutoProto').checked = ctl.auto_restart_protocol !== false;
+}
+}
+var AUTO_OPEN_KEY = 'qqbot_autologin_ts';
+function maybeAutoOpenLogin(needLogin) {
+if (!needLogin || !S.loginUrl) { S.autoOpenDone = false; return; }
+if (S.autoOpenDone) return;
+var off = false, last = 0;
+try {
+off = localStorage.getItem('qqbot_autologin_off') === '1';
+last = parseInt(sessionStorage.getItem(AUTO_OPEN_KEY) || '0', 10) || 0;
+} catch (e) {}
+if (off) return;
+if (Date.now() - last < 5 * 60 * 1000) return;
+S.autoOpenDone = true;
+try { sessionStorage.setItem(AUTO_OPEN_KEY, String(Date.now())); } catch (e) {}
+var url = S.loginUrl;
+setTimeout(function () {
+var win = null;
+try { win = window.open(url, '_blank'); } catch (e) { win = null; }
+if (!win) { try { location.href = url; } catch (e) {} }
+}, 1200);
+}
+function onState(st) {
+if (!st) return;
+S.state = st;
+renderState(st);
+if (!S.formsFilled && st.config && st.config.plugins) {
+applyConfig(st.config);
+S.formsFilled = true;
+}
+updateKeyPlaceholder(st);
+}
+function updateKeyPlaceholder(st) {
+var cfg = (st && st.config) || {};
+var ai = (cfg.plugins && cfg.plugins.ai_chat) || {};
+var stProfiles = (Array.isArray(ai.profiles) && ai.profiles.length) ? ai.profiles : legacyProfiles(ai);
+var prof = null;
+var wantId = S.profileSel || ai.active_profile || '';
+for (var pi = 0; pi < stProfiles.length; pi++) {
+if (stProfiles[pi].id === wantId) { prof = stProfiles[pi]; break; }
+}
+if (!prof) prof = stProfiles[0] || {};
+var masked = prof.api_key || '';
+S.apiKeyMask = masked;
+S.apiKeySet = !!masked;
+var inp = $('aiKey');
+if (!inp.value) {
+inp.placeholder = S.apiKeySet ? (masked || '已设置（不显示明文）') : '未设置';
+}
+var pname = prof.name || prof.id || '当前接口';
+$('keyHint').textContent = S.apiKeySet
+? '当前接口「' + pname + '」已保存：' + (masked || '已设置（不显示明文）') +
+'；留空表示不修改，输入新值会覆盖。'
+: '当前接口「' + pname + '」还没有 API Key，填上后保存即可使用。支持 OpenAI 兼容 / Claude / Gemini。';
+var vision = ai.vision || {};
+var vMasked = vision.api_key || '';
+S.visionKeySet = !!st.vision_key_set || vMasked.indexOf('****') >= 0;
+var viInp = $('viKey');
+if (!viInp.value) {
+viInp.placeholder = S.visionKeySet ? (vMasked || '已设置（不显示明文）') : '跟随主配置';
+}
+$('viKeyHint').textContent = S.visionKeySet
+? '已保存专属 Key：' + (vMasked || '已设置') + '；留空表示不修改。'
+: '留空 = 跟随主配置的 API Key；已保存的密钥不回显明文。';
+var image = (cfg.plugins && cfg.plugins.image_gen) || {};
+var iMasked = image.api_key || '';
+S.imageKeySet = !!st.image_key_set || iMasked.indexOf('****') >= 0;
+var imgInp = $('imgKey');
+if (!imgInp.value) {
+imgInp.placeholder = S.imageKeySet ? (iMasked || '已设置（不显示明文）') : '跟随 AI 配置';
+}
+$('imgKeyHint').textContent = S.imageKeySet
+? '已保存专属 Key：' + (iMasked || '已设置') + '；留空表示不修改。'
+: '留空 = 跟随 AI 页的 API Key；已保存的密钥不回显明文。';
+}
+function updateBytesHint() {
+var hint = $('atMaxBytesHint');
+var n = Number($('atMaxBytes').value);
+if (!isFinite(n) || n <= 0) { hint.textContent = ''; return; }
+hint.textContent = '≈ ' + (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+function updateVisionState() {
+$('visionState').textContent = $('viEnabled').checked ? '已开启' : '已关闭';
+}
+function renderProfileSelect() {
+var sel = $('profileSelect');
+sel.innerHTML = S.profiles.map(function (p) {
+var isCur = p.id === S.activeProfile;
+var label = (p.name || p.id) + ' · ' + (p.model || '未设置模型');
+return '<option value="' + esc(p.id) + '">' + (isCur ? '✅ ' : '') + esc(label) + (isCur ? '（当前）' : '') + '</option>';
+}).join('');
+if (getProfile(S.profileSel)) sel.value = S.profileSel;
+else if (S.profiles.length) { S.profileSel = S.profiles[0].id; sel.value = S.profileSel; }
+}
+function fillProfileForm(id) {
+var p = getProfile(id) || S.profiles[0];
+if (!p) return;
+S.profileSel = p.id;
+$('aiProvider').value = p.provider || 'openai';
+$('aiBaseUrl').value = p.base_url || '';
+$('aiModel').value = p.model || '';
+$('aiTemp').value = p.temperature != null ? p.temperature : 0.7;
+$('aiMaxTokens').value = p.max_tokens != null ? p.max_tokens : 4096;
+$('aiKey').value = '';
+S.apiKeyMask = p.api_key || '';
+S.apiKeySet = !!S.apiKeyMask;
+$('aiKey').placeholder = S.apiKeySet ? (S.apiKeyMask || '已设置（不显示明文）') : '未设置';
+var pname = p.name || p.id || '当前接口';
+$('keyHint').textContent = S.apiKeySet
+? '当前接口「' + pname + '」已保存：' + (S.apiKeyMask || '已设置（不显示明文）') +
+'；留空表示不修改，输入新值会覆盖。'
+: '当前接口「' + pname + '」还没有 API Key，填上后保存即可使用。支持 OpenAI 兼容 / Claude / Gemini。';
+if (getProfile(id)) $('profileSelect').value = id;
+if (S.aiBase) S.aiBase.profile = collectProfileForm();
+updateModelHint();
+}
+function matchPresetModels(provider, baseUrl) {
+var presets = S.presets || [];
+var url = String(baseUrl || '').toLowerCase();
+var i, p;
+for (i = 0; i < presets.length; i++) {
+p = presets[i];
+if (url && p.base_url && url.indexOf(String(p.base_url).toLowerCase()) === 0) return p.models || [];
+}
+var out = [];
+for (i = 0; i < presets.length; i++) {
+p = presets[i];
+if (p.provider === provider && Array.isArray(p.models)) {
+p.models.forEach(function (m) { if (m && out.indexOf(m) < 0) out.push(m); });
+}
+}
+return out;
+}
+function updateModelHint() {
+var el = $('modelHint');
+if (!el) return;
+var models = matchPresetModels($('aiProvider').value, $('aiBaseUrl').value.trim());
+if (!models.length) { el.hidden = true; el.textContent = ''; return; }
+el.hidden = false;
+el.textContent = '模型名试试：' + models.slice(0, 3).join(' / ');
+}
+function loadPresets() {
+if (S.presets && S.presets.length) { updateModelHint(); return Promise.resolve(S.presets); }
+return api('/api/presets', { timeout: 8000 }).then(function (r) {
+if (!r.ok) return null;
+var list = (r.data && (r.data.providers || r.data.presets)) || [];
+S.presets = Array.isArray(list) ? list.filter(function (x) { return x && typeof x === 'object'; }) : [];
+updateModelHint();
+return S.presets;
+});
+}
+function renderPresetList() {
+var box = $('presetList');
+if (!S.presets || !S.presets.length) {
+box.innerHTML = '<p class="empty">没有可用预设</p>';
+return;
+}
+box.innerHTML = S.presets.map(function (p) {
+var models = (p.models || []).slice(0, 4).join(' / ');
+return '<button class="preset-item" data-preset-id="' + esc(p.id) + '">' +
+'<div class="p-name">' + esc(p.name || p.id) + '</div>' +
+'<div class="p-meta">' + esc(p.provider || '') + (p.base_url ? ' · ' + esc(p.base_url) : ' · 地址自填') + '</div>' +
+(models ? '<div class="p-meta">模型：' + esc(models) + '</div>' : '') +
+(p.note ? '<div class="p-meta">' + esc(p.note) + '</div>' : '') +
+'</button>';
+}).join('');
+}
+function persistProfiles(activeId, selectId, msg, revert) {
+var snapshot = revert || deepCopy(S.profiles);
+var prevActive = S.activeProfile, prevSel = S.profileSel;
+return doSave({ plugins: { ai_chat: { profiles: S.profiles, active_profile: activeId } } }, { silent: true }).then(function (ok) {
+if (!ok) {
+S.profiles = snapshot;
+S.activeProfile = prevActive;
+S.profileSel = prevSel;
+renderProfileSelect();
+fillProfileForm(prevSel);
+return false;
+}
+if (getProfile(selectId)) {
+S.profileSel = selectId;
+renderProfileSelect();
+fillProfileForm(selectId);
+}
+toast(msg, 'ok');
+return true;
+});
+}
+function useProfile() {
+var id = $('profileSelect').value || S.profileSel;
+var p = getProfile(id);
+if (!p) return;
+return persistProfiles(id, id, '已切换到「' + (p.name || p.id) + '」');
+}
+function addProfile() {
+var cur = collectProfileForm();
+var p = {
+id: newProfileId(),
+name: '新接口 ' + (S.profiles.length + 1),
+provider: cur.provider,
+base_url: cur.base_url,
+api_key: '',
+model: cur.model,
+temperature: cur.temperature,
+max_tokens: cur.max_tokens
+};
+var prev = deepCopy(S.profiles);
+S.profiles.push(p);
+return persistProfiles(S.activeProfile, p.id, '已新增「' + p.name + '」，填上 API Key 后点「设为当前」', prev);
+}
+function delProfile() {
+if (S.profiles.length <= 1) { toast('至少要保留 1 套接口', 'err'); return; }
+var id = $('profileSelect').value || S.profileSel;
+var p = getProfile(id);
+if (!p) return;
+var name = p.name || p.id;
+confirmBox('删除接口配置？', '将删除「' + name + '」，此操作无法恢复。', '删除').then(function (yes) {
+if (!yes) return;
+var prev = deepCopy(S.profiles);
+S.profiles = S.profiles.filter(function (x) { return x.id !== id; });
+var newActive = S.activeProfile === id ? S.profiles[0].id : S.activeProfile;
+persistProfiles(newActive, newActive, '已删除「' + name + '」', prev);
+});
+}
+function addPresetProfile(presetId) {
+var preset = null;
+(S.presets || []).forEach(function (p) { if (p.id === presetId) preset = p; });
+if (!preset) { toast('预设不存在，请刷新重试', 'err'); return; }
+var models = preset.models || [];
+var p = {
+id: newProfileId(),
+name: preset.name || preset.id || ('预设 ' + (S.profiles.length + 1)),
+provider: preset.provider || 'openai',
+base_url: preset.base_url || '',
+api_key: '',
+model: models[0] || '',
+temperature: 0.7,
+max_tokens: 4096
+};
+var prev = deepCopy(S.profiles);
+S.profiles.push(p);
+$('presetBox').hidden = true;
+return persistProfiles(p.id, p.id, '已添加「' + p.name + '」，填上 API Key 即可用', prev);
+}
+function applyConfig(cfg) {
+if (!cfg || !cfg.plugins) return;
+var p = cfg.plugins;
+var ai = p.ai_chat || {};
+var image = p.image_gen || {};
+var kw = p.keyword || {};
+var ga = p.group_admin || {};
+var profiles = (Array.isArray(ai.profiles) && ai.profiles.length) ? ai.profiles : legacyProfiles(ai);
+S.profiles = deepCopy(profiles);
+S.activeProfile = ai.active_profile || S.profiles[0].id;
+if (!getProfile(S.profileSel)) S.profileSel = S.activeProfile;
+renderProfileSelect();
+fillProfileForm(S.profileSel);
+$('aiPrompt').value = ai.system_prompt || '';
+$('aiMaxHistory').value = ai.max_history != null ? ai.max_history : 8;
+$('aiTtl').value = ai.history_ttl_minutes != null ? ai.history_ttl_minutes : 30;
+var trigger = ai.trigger || {};
+$('aiPrivate').checked = trigger.private !== false;
+$('aiGroupAt').checked = trigger.group_at !== false;
+var followSec = Number(trigger.group_followup_seconds || 0);
+$('aiFollowupOn').checked = followSec > 0;
+$('aiFollowSec').value = followSec > 0 ? followSec : 120;
+$('aiFollowupSecField').hidden = followSec <= 0;
+$('aiKey').value = '';
+var vi = ai.vision || {};
+$('viEnabled').checked = !!vi.enabled;
+$('viProvider').value = vi.provider || '';
+$('viBaseUrl').value = vi.base_url || '';
+$('viModel').value = vi.model || '';
+$('viKey').value = '';
+$('viPrompt').value = vi.prompt || '';
+var se = ai.search || {};
+$('seEnabled').checked = !!se.enabled;
+$('seProvider').value = se.provider || 'auto';
+$('seMaxResults').value = se.max_results != null ? se.max_results : 5;
+$('seAlways').checked = !!se.always;
+$('seKeywords').value = (se.trigger_keywords || []).join('，');
+var at = ai.attachments || {};
+$('atEnabled').checked = !!at.enabled;
+$('atMaxImages').value = at.max_images != null ? at.max_images : 3;
+$('atMaxChars').value = at.max_file_chars != null ? at.max_file_chars : 4000;
+$('atMaxBytes').value = at.max_file_bytes != null ? at.max_file_bytes : 15000000;
+updateBytesHint();
+updateVisionState();
+$('kwRequireAt').checked = kw.group_require_at !== false;
+S.rules = (kw.rules || []).map(function (r) {
+r = r || {};
+return {
+name: r.name || '',
+keywordsText: (r.keywords || []).join('，'),
+match: r.match || 'contains',
+scope: r.scope || 'all',
+reply: r.reply || ''
+};
+});
+renderRules();
+var w = ga.welcome || {};
+$('gaWelcomeOn').checked = !!w.enabled;
+$('gaWelcomeTpl').value = w.template || '';
+var bw = ga.badwords || {};
+$('gaBadOn').checked = !!bw.enabled;
+$('gaBadWords').value = (bw.words || []).join('，');
+$('gaBadAction').value = bw.action || 'recall+mute';
+$('gaBadMute').value = bw.mute_seconds != null ? bw.mute_seconds : 300;
+$('gaBadWarn').value = bw.warn_text || '';
+$('gaBadRegex').value = (bw.regex_words || []).join('，');
+$('gaBadIgnoreAdmins').checked = !!bw.ignore_admins;
+$('gaBadIgnoreUsers').value = (bw.ignore_users || []).join('，');
+var fl = ga.flood || {};
+$('gaFloodOn').checked = !!fl.enabled;
+$('gaFloodMax').value = fl.max_messages != null ? fl.max_messages : 6;
+$('gaFloodWindow').value = fl.window_seconds != null ? fl.window_seconds : 10;
+$('gaFloodMute').value = fl.mute_seconds != null ? fl.mute_seconds : 120;
+$('gaFloodWarn').value = fl.warn_text || '';
+$('gaFloodIgnoreAdmins').checked = !!fl.ignore_admins;
+$('gaFloodIgnoreUsers').value = (fl.ignore_users || []).join('，');
+$('imgEnabled').checked = !!image.enabled;
+$('imgProvider').value = image.provider || 'openai';
+$('imgBaseUrl').value = image.base_url || '';
+$('imgModel').value = image.model || '';
+$('imgKey').value = '';
+$('imgSize').value = image.size || '1024x1024';
+$('imgTriggers').value = (image.triggers || []).join('，');
+$('imgPushGroups').value = (image.push_groups || []).join('，');
+$('imgCaption').value = image.caption || '';
+S.aiBase = {
+main: {
+system_prompt: $('aiPrompt').value,
+trigger: { private: $('aiPrivate').checked, group_at: $('aiGroupAt').checked, group_followup_seconds: followSec > 0 ? followSec : 0 },
+max_history: Number($('aiMaxHistory').value),
+history_ttl_minutes: Number($('aiTtl').value)
+},
+profile: collectProfileForm(),
+vision: {
+enabled: $('viEnabled').checked,
+provider: $('viProvider').value,
+base_url: $('viBaseUrl').value,
+model: $('viModel').value,
+prompt: $('viPrompt').value
+},
+search: {
+enabled: $('seEnabled').checked,
+provider: $('seProvider').value,
+max_results: Number($('seMaxResults').value),
+always: $('seAlways').checked,
+trigger_keywords: splitWords($('seKeywords').value)
+},
+attachments: {
+enabled: $('atEnabled').checked,
+max_images: Number($('atMaxImages').value),
+max_file_chars: Number($('atMaxChars').value),
+max_file_bytes: Number($('atMaxBytes').value)
+}
+};
+S.imgBase = {
+enabled: $('imgEnabled').checked,
+provider: $('imgProvider').value,
+base_url: $('imgBaseUrl').value,
+model: $('imgModel').value,
+size: $('imgSize').value,
+triggers: splitWords($('imgTriggers').value),
+push_groups: parseGroupList($('imgPushGroups').value),
+caption: $('imgCaption').value
+};
+}
+function options(list, cur, labels) {
+return list.map(function (v) {
+return '<option value="' + v + '"' + (v === cur ? ' selected' : '') + '>' + labels[v] + '</option>';
+}).join('');
+}
+function renderRules() {
+var box = $('rulesList');
+if (!S.rules.length) {
+box.innerHTML = '<p class="empty">还没有规则，点下面「新增规则」。</p>';
+return;
+}
+box.innerHTML = S.rules.map(function (r, i) {
+var isLast = i === S.rules.length - 1;
+return '<div class="rule-card" data-idx="' + i + '">' +
+'<div class="rule-head">' +
+'<span class="rule-no">规则 ' + (i + 1) + '</span>' +
+'<span class="spacer"></span>' +
+'<button class="icon-btn" data-act="up" data-idx="' + i + '"' + (i === 0 ? ' disabled' : '') + '>↑</button>' +
+'<button class="icon-btn" data-act="down" data-idx="' + i + '"' + (isLast ? ' disabled' : '') + '>↓</button>' +
+'<button class="icon-btn del" data-act="del" data-idx="' + i + '">✕</button>' +
+'</div>' +
+'<div class="field"><label>名称</label><input data-idx="' + i + '" data-field="name" value="' + esc(r.name) + '" placeholder="规则名称"></div>' +
+'<div class="field"><label>关键词（逗号分隔）</label><input data-idx="' + i + '" data-field="keywordsText" value="' + esc(r.keywordsText) + '" placeholder="你好, 在吗"></div>' +
+'<div class="grid2">' +
+'<div class="field"><label>匹配方式</label><select data-idx="' + i + '" data-field="match">' +
+options(['contains', 'exact', 'regex'], r.match || 'contains', { contains: '包含 contains', exact: '完全相等 exact', regex: '正则 regex' }) +
+'</select></div>' +
+'<div class="field"><label>生效范围</label><select data-idx="' + i + '" data-field="scope">' +
+options(['all', 'group', 'private'], r.scope || 'all', { all: '全部', group: '仅群聊', private: '仅私聊' }) +
+'</select></div>' +
+'</div>' +
+'<div class="field"><label>回复内容</label><textarea data-idx="' + i + '" data-field="reply" placeholder="命中后回复的文本">' + esc(r.reply) + '</textarea></div>' +
+(r.match === 'regex' ? '<p class="hint">正则模式：关键词按正则表达式处理，多个用 | 连接。</p>' : '') +
+'</div>';
+}).join('');
+}
+function onRuleField(e) {
+var t = e.target;
+if (!t || t.dataset == null || t.dataset.field == null) return;
+var i = Number(t.dataset.idx);
+if (!S.rules[i]) return;
+S.rules[i][t.dataset.field] = t.value;
+}
+function onRuleClick(e) {
+var btn = e.target.closest ? e.target.closest('button[data-act]') : null;
+if (!btn) return;
+var i = Number(btn.dataset.idx), act = btn.dataset.act;
+if (act === 'del') {
+S.rules.splice(i, 1);
+} else if (act === 'up' && i > 0) {
+var a = S.rules[i - 1]; S.rules[i - 1] = S.rules[i]; S.rules[i] = a;
+} else if (act === 'down' && i < S.rules.length - 1) {
+var b = S.rules[i + 1]; S.rules[i + 1] = S.rules[i]; S.rules[i] = b;
+} else {
+return;
+}
+renderRules();
+}
+function withBtn(btn, label, fn) {
+return Promise.resolve().then(function () {
+if (btn.disabled) return;
+var old = btn.textContent;
+btn.disabled = true;
+btn.textContent = label;
+return Promise.resolve().then(fn).catch(function (e) {
+toast('操作失败：' + ((e && e.message) || e), 'err');
+}).then(function () {
+btn.disabled = false;
+btn.textContent = old;
+});
+});
+}
+function doSave(patch, opt) {
+return api('/api/config', { method: 'POST', body: patch, timeout: 15000 }).then(function (r) {
+if (!r.ok && (r.status === 404 || r.status === 405 || r.status === 501)) {
+return api('/api/config', { method: 'PATCH', body: patch, timeout: 15000 });
+}
+return r;
+}).then(function (r) {
+if (!r.ok) { toast('保存失败：' + r.error, 'err'); return false; }
+if (!(opt && opt.silent)) toast('保存成功', 'ok');
+var cfg = r.data && r.data.config;
+if (cfg) applyConfig(cfg);
+refreshState(true);
+return true;
+});
+}
+function numField(id, label, opt) {
+opt = opt || {};
+var raw = $(id).value.trim();
+if (raw === '') return { ok: false, error: label + ' 不能为空' };
+var n = Number(raw);
+if (!isFinite(n)) return { ok: false, error: label + ' 必须是数字' };
+if (opt.integer && Math.floor(n) !== n) return { ok: false, error: label + ' 必须是整数' };
+if (opt.min != null && n < opt.min) return { ok: false, error: label + ' 不能小于 ' + opt.min };
+if (opt.max != null && n > opt.max) return { ok: false, error: label + ' 不能大于 ' + opt.max };
+return { ok: true, value: n };
+}
+function diffOnly(base, cur) {
+var out = {}, changed = false;
+Object.keys(cur).forEach(function (k) {
+var a = JSON.stringify(base ? base[k] : undefined);
+var b = JSON.stringify(cur[k]);
+if (a !== b) { out[k] = cur[k]; changed = true; }
+});
+return changed ? out : null;
+}
+function saveAI() {
+var temp = numField('aiTemp', '温度', { min: 0, max: 2 });
+if (!temp.ok) { toast(temp.error, 'err'); return; }
+var mt = numField('aiMaxTokens', 'max_tokens', { min: 1, integer: true });
+if (!mt.ok) { toast(mt.error, 'err'); return; }
+var mh = numField('aiMaxHistory', '记忆轮数', { min: 0, integer: true });
+if (!mh.ok) { toast(mh.error, 'err'); return; }
+var ttl = numField('aiTtl', '过期分钟', { min: 0, integer: true });
+if (!ttl.ok) { toast(ttl.error, 'err'); return; }
+var seMax = numField('seMaxResults', '搜索结果数', { min: 1, integer: true });
+if (!seMax.ok) { toast(seMax.error, 'err'); return; }
+var atImages = numField('atMaxImages', '最多图片数', { min: 0, integer: true });
+if (!atImages.ok) { toast(atImages.error, 'err'); return; }
+var atChars = numField('atMaxChars', '单文件字符上限', { min: 0, integer: true });
+if (!atChars.ok) { toast(atChars.error, 'err'); return; }
+var atBytes = numField('atMaxBytes', '单文件大小上限', { min: 0, integer: true });
+if (!atBytes.ok) { toast(atBytes.error, 'err'); return; }
+var baseUrl = $('aiBaseUrl').value.trim();
+if (!/^https?:\/\/.+/i.test(baseUrl)) { toast('接口地址需以 http(s):// 开头', 'err'); return; }
+var model = $('aiModel').value.trim();
+if (!model) { toast('模型不能为空', 'err'); return; }
+var viBaseUrl = $('viBaseUrl').value.trim();
+if (viBaseUrl && !/^https?:\/\/.+/i.test(viBaseUrl)) {
+toast('视觉识别接口地址需以 http(s):// 开头', 'err');
+return;
+}
+var form = collectProfileForm();
+var key = $('aiKey').value.trim();
+var profileChanged = !!diffOnly(S.aiBase.profile, form) || !!key;
+if (profileChanged) {
+var prof = getProfile(S.profileSel);
+if (prof) {
+prof.provider = form.provider;
+prof.base_url = form.base_url;
+prof.model = form.model;
+prof.temperature = form.temperature;
+prof.max_tokens = form.max_tokens;
+if (key) prof.api_key = key;
+}
+}
+var followSec = 0;
+if ($('aiFollowupOn').checked) {
+var rawSec = Number($('aiFollowSec').value);
+followSec = (isFinite(rawSec) && rawSec >= 10 && rawSec <= 3600) ? Math.floor(rawSec) : 120;
+}
+var triggerPatch = {};
+var baseTrigger = S.aiBase.main.trigger;
+if ($('aiPrivate').checked !== baseTrigger.private) triggerPatch.private = $('aiPrivate').checked;
+if ($('aiGroupAt').checked !== baseTrigger.group_at) triggerPatch.group_at = $('aiGroupAt').checked;
+if (followSec !== baseTrigger.group_followup_seconds) triggerPatch.group_followup_seconds = followSec;
+var aiPatch = diffOnly(S.aiBase.main, {
+system_prompt: $('aiPrompt').value,
+max_history: mh.value,
+history_ttl_minutes: ttl.value
+}) || {};
+if (Object.keys(triggerPatch).length) aiPatch.trigger = triggerPatch;
+if (profileChanged) {
+aiPatch.profiles = S.profiles;
+aiPatch.active_profile = S.activeProfile;
+}
+var vision = {
+enabled: $('viEnabled').checked,
+provider: $('viProvider').value,
+base_url: viBaseUrl,
+model: $('viModel').value.trim(),
+prompt: $('viPrompt').value
+};
+var search = {
+enabled: $('seEnabled').checked,
+provider: $('seProvider').value,
+max_results: seMax.value,
+always: $('seAlways').checked,
+trigger_keywords: splitWords($('seKeywords').value)
+};
+var attachments = {
+enabled: $('atEnabled').checked,
+max_images: atImages.value,
+max_file_chars: atChars.value,
+max_file_bytes: atBytes.value
+};
+var vPatch = diffOnly(S.aiBase.vision, vision);
+var vKey = $('viKey').value.trim();
+if (vPatch || vKey) {
+aiPatch.vision = vPatch || {};
+if (vKey) aiPatch.vision.api_key = vKey;
+}
+var sPatch = diffOnly(S.aiBase.search, search);
+if (sPatch) aiPatch.search = sPatch;
+var aPatch = diffOnly(S.aiBase.attachments, attachments);
+if (aPatch) aiPatch.attachments = aPatch;
+if (!Object.keys(aiPatch).length) {
+toast('没有需要保存的改动', 'ok');
+return;
+}
+return doSave({ plugins: { ai_chat: aiPatch } }).then(function (ok) {
+if (ok) { $('aiKey').value = ''; $('viKey').value = ''; }
+});
+}
+function saveImage() {
+var baseUrl = $('imgBaseUrl').value.trim();
+if (baseUrl && !/^https?:\/\/.+/i.test(baseUrl)) {
+toast('画图接口地址需以 http(s):// 开头', 'err');
+return;
+}
+var cur = {
+enabled: $('imgEnabled').checked,
+provider: $('imgProvider').value,
+base_url: baseUrl,
+model: $('imgModel').value.trim(),
+size: $('imgSize').value,
+triggers: splitWords($('imgTriggers').value),
+push_groups: parseGroupList($('imgPushGroups').value),
+caption: $('imgCaption').value
+};
+var patch = diffOnly(S.imgBase, cur) || {};
+var key = $('imgKey').value.trim();
+if (key) patch.api_key = key;
+if (!Object.keys(patch).length) {
+toast('没有需要保存的改动', 'ok');
+return;
+}
+return doSave({ plugins: { image_gen: patch } }).then(function (ok) {
+if (ok) $('imgKey').value = '';
+});
+}
+function saveRules() {
+var rules = S.rules.map(function (r) {
+var kws = splitWords(r.keywordsText);
+var out = {
+name: (r.name || '').trim(),
+keywords: kws,
+match: r.match || 'contains',
+scope: r.scope || 'all',
+reply: r.reply || ''
+};
+if (out.match === 'regex' && kws.length) out.regex = kws.join('|');
+return out;
+});
+for (var i = 0; i < rules.length; i++) {
+var r = rules[i];
+if (!r.name) { toast('第 ' + (i + 1) + ' 条规则缺少名称', 'err'); return; }
+if (!r.keywords.length) { toast('第 ' + (i + 1) + ' 条规则缺少关键词', 'err'); return; }
+if (r.match === 'regex') {
+try { new RegExp(r.regex || r.keywords[0]); } catch (e) {
+toast('第 ' + (i + 1) + ' 条规则的正则无效', 'err');
+return;
+}
+}
+}
+return doSave({ plugins: { keyword: { group_require_at: $('kwRequireAt').checked, rules: rules } } });
+}
+function saveGroupAdmin() {
+var bm = numField('gaBadMute', '违禁词禁言秒数', { min: 0, integer: true });
+if (!bm.ok) { toast(bm.error, 'err'); return; }
+var fm = numField('gaFloodMax', '刷屏消息数', { min: 1, integer: true });
+if (!fm.ok) { toast(fm.error, 'err'); return; }
+var fw = numField('gaFloodWindow', '刷屏时间窗', { min: 1, integer: true });
+if (!fw.ok) { toast(fw.error, 'err'); return; }
+var fmu = numField('gaFloodMute', '刷屏禁言秒数', { min: 0, integer: true });
+if (!fmu.ok) { toast(fmu.error, 'err'); return; }
+var badQQ = parseQQList($('gaBadIgnoreUsers').value);
+var floodQQ = parseQQList($('gaFloodIgnoreUsers').value);
+var badInput = badQQ.bad.concat(floodQQ.bad);
+var patch = {
+plugins: {
+group_admin: {
+welcome: {
+enabled: $('gaWelcomeOn').checked,
+template: $('gaWelcomeTpl').value
+},
+badwords: {
+enabled: $('gaBadOn').checked,
+words: splitWords($('gaBadWords').value),
+regex_words: splitWords($('gaBadRegex').value),
+action: $('gaBadAction').value,
+mute_seconds: bm.value,
+ignore_admins: $('gaBadIgnoreAdmins').checked,
+ignore_users: badQQ.list,
+warn_text: $('gaBadWarn').value
+},
+flood: {
+enabled: $('gaFloodOn').checked,
+max_messages: fm.value,
+window_seconds: fw.value,
+mute_seconds: fmu.value,
+ignore_admins: $('gaFloodIgnoreAdmins').checked,
+ignore_users: floodQQ.list,
+warn_text: $('gaFloodWarn').value
+}
+}
+}
+};
+if (!badInput.length) return doSave(patch);
+return doSave(patch, { silent: true }).then(function (ok) {
+if (ok) toast('已保存（已过滤非数字 QQ：' + badInput.slice(0, 5).join('、') + '）', 'ok');
+});
+}
+var ACTION_LABEL = {
+all_start: '服务已开启', all_stop: '服务已关闭', all_restart: '服务已重启',
+protocol_start: '协议层已启动', protocol_stop: '协议层已停止', protocol_restart: '协议层已重启',
+bot_start: '机器人已启动', bot_stop: '机器人已停止', bot_restart: '机器人已重启'
+};
+function setActionsBusy(b) {
+var btns = document.querySelectorAll('[data-act], #btnAllStart, #btnAllStop');
+for (var i = 0; i < btns.length; i++) btns[i].disabled = b;
+}
+function botAction(action, btn) {
+if (S.actionsBusy) return;
+S.actionsBusy = true;
+setActionsBusy(true);
+var old = btn.textContent;
+btn.textContent = '执行中…';
+var slow = action.indexOf('protocol') === 0 || action.indexOf('all') === 0;
+if (slow) toast('正在执行，协议层可能需要 1~3 分钟…', 'ok');
+api('/api/bot/action', { method: 'POST', body: { action: action }, timeout: slow ? 600000 : 150000 }).then(function (r) {
+if (!r.ok) { toast('操作失败：' + r.error, 'err'); refreshState(true); return; }
+toast(ACTION_LABEL[action] || '完成', 'ok');
+var st = r.data && r.data.state;
+if (st) onState(st); else refreshState(true);
+}).catch(function (e) {
+toast('操作失败：' + ((e && e.message) || e), 'err');
+}).then(function () {
+S.actionsBusy = false;
+setActionsBusy(false);
+btn.textContent = old;
+});
+}
+function sessionMeta(key) {
+key = String(key || '');
+var m = key.match(/^group_?(\d+)[:：](\d+)$/);
+if (m) return { title: '群 ' + m[1], sub: '用户 ' + m[2] };
+m = key.match(/^group_?(\d+)$/);
+if (m) return { title: '群 ' + m[1], sub: '群会话' };
+m = key.match(/^(?:private|friend|user|c2c)[:_]?(\d+)$/);
+if (m) return { title: '私聊 ' + m[1], sub: '私聊会话' };
+return { title: key || '（未知会话）', sub: '' };
+}
+function msgTime(m) {
+if (!m) return null;
+var v = m.ts || m.time || m.timestamp || m.created_at || null;
+return v || null;
+}
+function renderSessions() {
+var list = $('ctxList');
+if (!S.sessions.length) {
+list.innerHTML = '<p class="empty">暂无上下文</p>';
+return;
+}
+list.innerHTML = '';
+S.sessions.forEach(function (s) {
+var meta = sessionMeta(s.key);
+var msgs = s.messages || [];
+var item = document.createElement('div');
+item.className = 'ctx-item';
+var head = document.createElement('button');
+head.type = 'button';
+head.className = 'ctx-head';
+head.innerHTML =
+'<span class="ctx-title">' + esc(meta.title) + '</span>' +
+(meta.sub ? '<span class="ctx-sub">' + esc(meta.sub) + '</span>' : '') +
+'<span class="ctx-sub">· ' + msgs.length + ' 条</span>' +
+'<span class="spacer"></span>' +
+'<span class="muted small">' + esc(fmtTime(s.updated_at) || '—') + '</span>' +
+'<span class="chev">' + (S.openSessions[s.key] ? '▴' : '▾') + '</span>';
+var body = document.createElement('div');
+body.className = 'ctx-body';
+body.hidden = !S.openSessions[s.key];
+if (!msgs.length) {
+body.innerHTML = '<p class="empty">没有消息</p>';
+} else {
+msgs.forEach(function (m, i) {
+var isUser = (m.role || 'user') !== 'assistant';
+var row = document.createElement('div');
+row.className = 'msg ' + (isUser ? 'user' : 'assistant');
+var bubble = document.createElement('div');
+bubble.className = 'bubble';
+var txt = document.createElement('div');
+txt.textContent = String(m.content == null ? '' : m.content);
+bubble.appendChild(txt);
+var tRaw = msgTime(m) || (i === msgs.length - 1 ? s.updated_at : null);
+if (tRaw) {
+var tm = document.createElement('div');
+tm.className = 'bubble-time';
+tm.textContent = fmtTime(tRaw);
+bubble.appendChild(tm);
+}
+row.appendChild(bubble);
+body.appendChild(row);
+});
+}
+head.addEventListener('click', function () {
+S.openSessions[s.key] = !S.openSessions[s.key];
+body.hidden = !S.openSessions[s.key];
+var chev = head.querySelector('.chev');
+if (chev) chev.textContent = S.openSessions[s.key] ? '▴' : '▾';
+});
+item.appendChild(head);
+item.appendChild(body);
+list.appendChild(item);
+});
+}
+function loadContext() {
+var list = $('ctxList');
+list.innerHTML = '<p class="empty">加载中…</p>';
+return api('/api/context', { timeout: 8000 }).then(function (r) {
+if (!r.ok) {
+list.innerHTML = '<p class="empty err">加载失败：' + esc(r.error) + '</p>';
+toast('读取上下文失败：' + r.error, 'err');
+return;
+}
+var d = r.data || {};
+S.sessions = d.sessions || [];
+var total = d.total != null ? d.total : S.sessions.length;
+$('ctxTotal').textContent = '共 ' + total + ' 个';
+renderSessions();
+});
+}
+function loadLogPreview() {
+return api('/api/logs?lines=8', { timeout: 6000 }).then(function (r) {
+var pre = $('logPreview');
+if (!r.ok) { pre.textContent = '日志获取失败：' + r.error; return; }
+var lines = (r.data && r.data.lines) || [];
+pre.textContent = lines.length ? lines.join('\n') : '（暂无日志）';
+pre.scrollTop = pre.scrollHeight;
+});
+}
+function loadLogs() {
+var box = $('logBox');
+box.textContent = '加载中…';
+return api('/api/logs?lines=300', { timeout: 10000 }).then(function (r) {
+if (!r.ok) {
+box.textContent = '日志获取失败：' + r.error;
+toast('读取日志失败：' + r.error, 'err');
+return;
+}
+var lines = (r.data && r.data.lines) || [];
+box.textContent = lines.length ? lines.join('\n') : '（暂无日志）';
+box.scrollTop = box.scrollHeight;
+});
+}
+function refreshState(silent) {
+return api('/api/state', { timeout: 6000 }).then(function (r) {
+if (!r.ok) {
+if (r.status === 0) {
+showOffline(r.error);
+} else if (!silent) {
+toast('读取状态失败：' + r.error, 'err');
+}
+$('lastRefresh').textContent = '刷新失败';
+return false;
+}
+hideOffline();
+onState(r.data || {});
+$('lastRefresh').textContent = '更新于 ' + clock(new Date());
+if (S.tab === 'overview') loadLogPreview();
+return true;
+});
+}
+function schedulePoll() {
+clearTimeout(S.pollTimer);
+S.pollTimer = setTimeout(function () {
+refreshState(true).then(schedulePoll);
+}, S.offline ? 5000 : 3000);
+}
+function switchTab(tab) {
+S.tab = tab;
+var views = document.querySelectorAll('.view');
+for (var i = 0; i < views.length; i++) {
+views[i].classList.toggle('active', views[i].dataset.view === tab);
+}
+var btns = document.querySelectorAll('.tabbtn');
+for (var j = 0; j < btns.length; j++) {
+btns[j].classList.toggle('active', btns[j].dataset.tab === tab);
+}
+var sc = document.scrollingElement || document.documentElement;
+if (sc) sc.scrollTop = 0;
+if (tab === 'context') loadContext();
+else if (tab === 'logs') loadLogs();
+else if (tab === 'overview') { refreshState(true); loadLogPreview(); }
+}
+function confirmBox(title, text, okLabel) {
+return new Promise(function (resolve) {
+var modal = $('modal');
+$('modalTitle').textContent = title;
+$('modalText').textContent = text;
+$('modalOk').textContent = okLabel || '确定';
+modal.hidden = false;
+function done(val) {
+modal.hidden = true;
+$('modalOk').onclick = null;
+$('modalCancel').onclick = null;
+modal.onclick = null;
+resolve(val);
+}
+$('modalOk').onclick = function () { done(true); };
+$('modalCancel').onclick = function () { done(false); };
+modal.onclick = function (e) { if (e.target === modal) done(false); };
+});
+}
+function copyText(t) {
+if (!t) return;
+if (navigator.clipboard && navigator.clipboard.writeText) {
+navigator.clipboard.writeText(t).then(function () {
+toast('已复制', 'ok');
+}).catch(function () { fallbackCopy(t); });
+} else {
+fallbackCopy(t);
+}
+}
+function fallbackCopy(t) {
+try {
+var ta = document.createElement('textarea');
+ta.value = t;
+ta.style.position = 'fixed';
+ta.style.opacity = '0';
+document.body.appendChild(ta);
+ta.select();
+document.execCommand('copy');
+document.body.removeChild(ta);
+toast('已复制', 'ok');
+} catch (e) {
+toast('复制失败，请手动复制', 'err');
+}
+}
+function bindKeyToggle(inputId, btnId, state) {
+$(btnId).addEventListener('click', function () {
+var inp = $(inputId);
+var show = inp.type === 'password';
+inp.type = show ? 'text' : 'password';
+$(btnId).textContent = show ? '隐藏' : '显示';
+if (show && !inp.value) {
+toast(state.isSet() ? '已保存：' + (state.mask() || '已设置（不显示明文）') : state.unsetText(), 'ok');
+}
+});
+}
+function bind() {
+var tabs = document.querySelectorAll('.tabbtn');
+for (var i = 0; i < tabs.length; i++) {
+(function (btn) {
+btn.addEventListener('click', function () { switchTab(btn.dataset.tab); });
+})(tabs[i]);
+}
+var CONFIRM = {
+protocol_stop: ['停止协议层？', 'QQ 会下线，机器人收不到消息。', '停止'],
+protocol_restart: ['重启协议层？', 'QQ 会短暂下线，约 10 秒~3 分钟恢复。', '重启'],
+bot_stop: ['停止机器人？', '停止后不再回复消息。', '停止'],
+bot_restart: ['重启机器人？', '会断开当前连接再重新拉起。', '重启']
+};
+var actBtns = document.querySelectorAll('[data-act]');
+for (var j = 0; j < actBtns.length; j++) {
+(function (b) {
+b.addEventListener('click', function () {
+var act = b.dataset.act, c = CONFIRM[act];
+if (!c) return botAction(act, b);
+confirmBox(c[0], c[1], c[2]).then(function (yes) { if (yes) botAction(act, b); });
+});
+})(actBtns[j]);
+}
+$('btnAllStart').addEventListener('click', function () {
+confirmBox('开启服务？', '依次启动协议层（QQ+NapCat）和机器人，最长约 3 分钟。', '开启').then(function (yes) {
+if (yes) botAction('all_start', $('btnAllStart'));
+});
+});
+$('btnAllStop').addEventListener('click', function () {
+confirmBox('关闭服务？', '只停止机器人（不再回复消息），QQ 协议层保持在线，下次开启是秒级的、不用重新扫码。', '关闭').then(function (yes) {
+if (yes) botAction('all_stop', $('btnAllStop'));
+});
+});
+$('btnAllOff').addEventListener('click', function () {
+confirmBox('彻底关闭服务？', '机器人和 QQ 都会停止，省电。但下次开启需要重新登录验证（扫码/密码），确认吗？', '彻底关闭').then(function (yes) {
+if (yes) botAction('all_off', $('btnAllOff'));
+});
+});
+['ctlAutoBot', 'ctlAutoProto'].forEach(function (id) {
+$(id).addEventListener('change', function () {
+S.ctlDirty = true;
+var patch = { control: { auto_restart_bot: $('ctlAutoBot').checked, auto_restart_protocol: $('ctlAutoProto').checked } };
+api('/api/config', { method: 'POST', body: patch, timeout: 15000 }).then(function (r) {
+toast(r.ok ? '自动守护设置已保存' : ('保存失败：' + r.error), r.ok ? 'ok' : 'err');
+}).catch(function (e) { toast('保存失败：' + e, 'err'); })
+.then(function () { S.ctlDirty = false; });
+});
+});
+$('btnCopyWebui').addEventListener('click', function () { copyText($('ovWebui').dataset.url || ''); });
+$('btnGoLogin').addEventListener('click', function () {
+if (!S.loginUrl) return;
+var win = null;
+try { win = window.open(S.loginUrl, '_blank'); } catch (e) { win = null; }
+if (!win) location.href = S.loginUrl;
+});
+$('btnNoAutoLogin').addEventListener('click', function () {
+try { localStorage.setItem('qqbot_autologin_off', '1'); } catch (e) {}
+toast('已关闭自动打开，需要时点「去登录」', 'ok');
+});
+bindKeyToggle('aiKey', 'btnToggleKey', {
+isSet: function () { return S.apiKeySet; },
+mask: function () { return S.apiKeyMask; },
+unsetText: function () { return '尚未设置 API Key'; }
+});
+bindKeyToggle('viKey', 'btnToggleViKey', {
+isSet: function () { return S.visionKeySet; },
+mask: function () { return ($('viKey').placeholder || ''); },
+unsetText: function () { return '视觉识别未设置专属 Key，将跟随主配置'; }
+});
+bindKeyToggle('imgKey', 'btnToggleImgKey', {
+isSet: function () { return S.imageKeySet; },
+mask: function () { return ($('imgKey').placeholder || ''); },
+unsetText: function () { return '画图未设置专属 Key，将跟随 AI 配置'; }
+});
+$('btnSaveAI').addEventListener('click', function () {
+withBtn($('btnSaveAI'), '保存中…', saveAI);
+});
+$('btnSaveImage').addEventListener('click', function () {
+withBtn($('btnSaveImage'), '保存中…', saveImage);
+});
+$('profileSelect').addEventListener('change', function () {
+S.profileSel = this.value;
+fillProfileForm(this.value);
+});
+$('btnProfileUse').addEventListener('click', function () {
+withBtn($('btnProfileUse'), '切换中…', useProfile);
+});
+$('btnProfileAdd').addEventListener('click', function () {
+withBtn($('btnProfileAdd'), '新增中…', addProfile);
+});
+$('btnProfileDel').addEventListener('click', delProfile);
+$('btnPresetOpen').addEventListener('click', function () {
+var box = $('presetBox');
+var open = box.hidden;
+box.hidden = !open;
+if (!open) return;
+$('presetList').innerHTML = '<p class="empty">加载中…</p>';
+loadPresets().then(function (list) {
+if (list && list.length) renderPresetList();
+else $('presetList').innerHTML = '<p class="empty err">预设加载失败，检查管理服务</p>';
+});
+});
+$('btnPresetClose').addEventListener('click', function () { $('presetBox').hidden = true; });
+$('presetList').addEventListener('click', function (e) {
+var b = e.target.closest ? e.target.closest('button[data-preset-id]') : null;
+if (!b || S.presetBusy) return;
+S.presetBusy = true;
+var p = addPresetProfile(b.dataset.presetId);
+if (p && p.then) p.then(function () { S.presetBusy = false; }, function () { S.presetBusy = false; });
+else S.presetBusy = false;
+});
+$('aiProvider').addEventListener('change', updateModelHint);
+$('aiBaseUrl').addEventListener('input', updateModelHint);
+$('atMaxBytes').addEventListener('input', updateBytesHint);
+$('viEnabled').addEventListener('change', updateVisionState);
+$('aiFollowupOn').addEventListener('change', function () {
+$('aiFollowupSecField').hidden = !this.checked;
+if (this.checked) {
+var n = Number($('aiFollowSec').value);
+if (!(isFinite(n) && n >= 10 && n <= 3600)) $('aiFollowSec').value = 120;
+}
+});
+$('btnAddRule').addEventListener('click', function () {
+S.rules.push({ name: '新规则', keywordsText: '', match: 'contains', scope: 'all', reply: '' });
+renderRules();
+var cards = document.querySelectorAll('.rule-card');
+if (cards.length) cards[cards.length - 1].scrollIntoView({ behavior: 'smooth', block: 'center' });
+});
+$('btnSaveRules').addEventListener('click', function () {
+withBtn($('btnSaveRules'), '保存中…', saveRules);
+});
+$('rulesList').addEventListener('input', onRuleField);
+$('rulesList').addEventListener('change', onRuleField);
+$('rulesList').addEventListener('click', onRuleClick);
+$('btnSaveGroup').addEventListener('click', function () {
+withBtn($('btnSaveGroup'), '保存中…', saveGroupAdmin);
+});
+$('btnCtxRefresh').addEventListener('click', loadContext);
+$('btnClearCtx').addEventListener('click', function () {
+confirmBox('清空全部上下文？', '所有会话的 AI 记忆都会被删除，且无法恢复。', '清空').then(function (yes) {
+if (!yes) return;
+withBtn($('btnClearCtx'), '清空中…', function () {
+return api('/api/context/clear', { method: 'POST', timeout: 10000 }).then(function (r) {
+if (!r.ok) { toast('清空失败：' + r.error, 'err'); return; }
+toast('上下文已清空', 'ok');
+loadContext();
+});
+});
+});
+});
+$('btnLogsRefresh').addEventListener('click', loadLogs);
+$('btnLogsClean').addEventListener('click', function () {
+var b = $('btnLogsClean');
+b.disabled = true;
+api('/api/logs/clean', { method: 'POST', timeout: 30000 }).then(function (r) {
+if (!r.ok) { toast('清理失败：' + r.error, 'err'); return; }
+var mb = (r.data && r.data.freed_mb) || 0;
+toast(mb > 0 ? ('已清理，释放 ' + mb + ' MB') : '已经很干净了，无需清理', 'ok');
+refreshState(true);
+loadLogs();
+}).catch(function (e) { toast('清理失败：' + e, 'err'); })
+.then(function () { b.disabled = false; });
+});
+$('btnRetry').addEventListener('click', function () {
+$('splash').hidden = false;
+refreshState(false).then(function () {
+$('splash').hidden = true;
+schedulePoll();
+});
+});
+}
+function init() {
+bind();
+$('splash').hidden = false;
+refreshState(false).then(function () {
+$('splash').hidden = true;
+if (S.tab === 'overview') loadLogPreview();
+loadPresets();
+schedulePoll();
+});
+}
+if (document.readyState === 'loading') {
+document.addEventListener('DOMContentLoaded', init);
+} else {
+init();
+}
+})();</script></body></html>

@@ -1,0 +1,59 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'org.jetbrains.kotlin.plugin.compose'
+}
+
+android {
+    namespace 'com.qqbot.console'
+    compileSdkVersion 'android-37.0'
+
+    defaultConfig {
+        applicationId "com.qqbot.console"
+        minSdk 26
+        targetSdk 28            // 允许从 App 私有目录 exec proot（Termux 同款做法），只用于侧载
+        versionCode 3
+        versionName "3.0"
+        ndk { abiFilters 'arm64-v8a' }
+    }
+
+    signingConfigs {
+        release {
+            // 口令放在 gradle.properties（不入库）或环境变量里：
+            //   QQBOT_KS_FILE / QQBOT_KS_PASS / QQBOT_KS_ALIAS
+            storeFile file(project.findProperty('QQBOT_KS_FILE') ?: '../apk/qqbot.keystore')
+            storePassword project.findProperty('QQBOT_KS_PASS') ?: 'qqbot123'
+            keyAlias project.findProperty('QQBOT_KS_ALIAS') ?: 'qqbot'
+            keyPassword project.findProperty('QQBOT_KS_PASS') ?: 'qqbot123'
+        }
+    }
+
+    buildFeatures { compose true }
+    buildToolsVersion '37.0.0'
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions { jvmTarget = '17' }
+    packaging { resources.excludes += ['/META-INF/{AL2.0,LGPL2.1}'] }
+    androidResources { noCompress += ['proot', 'loader'] }
+    lint { abortOnError false; checkReleaseBuilds false }
+
+    buildTypes {
+        debug { signingConfig signingConfigs.release }
+        release { signingConfig signingConfigs.release }
+    }
+}
+
+dependencies {
+    implementation 'androidx.activity:activity-compose:1.13.0'
+    implementation 'androidx.navigationevent:navigationevent-compose:1.1.2'
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'androidx.lifecycle:lifecycle-runtime-compose:2.8.7'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'org.apache.commons:commons-compress:1.27.1'
+    implementation 'top.yukonga.miuix.kmp:miuix-ui-android:0.9.3'
+    implementation 'top.yukonga.miuix.kmp:miuix-icons-android:0.9.3'
+    implementation 'top.yukonga.miuix.kmp:miuix-preference-android:0.9.3'
+}

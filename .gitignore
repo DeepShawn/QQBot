@@ -1,0 +1,39 @@
+# ---- 本机私有配置 / 凭据 ----
+protocol/.last_uin
+bot/config.json
+bot/data/
+data/
+run/
+logs/
+protocol/logs/
+apk/qqbot.keystore
+*.keystore
+*.jks
+local.properties
+
+# ---- 大文件 / 构建产物 ----
+protocol/downloads/
+apk/out/
+apk/*.apk
+apk/*.apk.idsig
+apk-miuix/app/build/
+apk-miuix/build/
+apk-miuix/.gradle/
+*.apk
+*.apk.idsig
+rootfs*.tar.gz
+*.tar.gz
+
+# ---- 运行环境镜像（含 QQ 登录态，绝不入库）----
+rootfs/
+qqbot-app.log
+app-error.txt
+
+# ---- 常规 ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+.idea/
+*.iml

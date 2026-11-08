@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>管理服务未启动</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; background: #0f1115; color: #e8eaf0;
+    font-family: -apple-system, "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+  }
+  .card { max-width: 420px; width: 100%; }
+  .icon { font-size: 56px; text-align: center; }
+  h1 { font-size: 20px; text-align: center; margin: 12px 0 8px; }
+  p { color: #9aa3b2; font-size: 14px; line-height: 1.7; }
+  code {
+    display: block; background: #171b22; border: 1px solid #232a35; border-radius: 10px;
+    padding: 10px 12px; font-size: 13px; color: #7ee0c0; overflow-x: auto; margin: 10px 0;
+  }
+  button {
+    width: 100%; margin-top: 16px; padding: 14px; border: 0; border-radius: 12px;
+    background: #00c8dc; color: #06141a; font-size: 16px; font-weight: 600;
+  }
+  .hint { font-size: 12px; color: #6b7280; text-align: center; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🤖</div>
+    <h1>管理服务未启动</h1>
+    <p>控制台页面由手机里的 proot 环境提供，现在连不上 <code>127.0.0.1:8080</code>。</p>
+    <p>在 DSH 的终端里运行：</p>
+    <code>cd ~/workspace/qqbot &amp;&amp; ./start-all.sh</code>
+    <button onclick="location.href='http://127.0.0.1:8080/'">重试</button>
+    <div class="hint">启动后会自动跳转（每 6 秒重试一次）</div>
+  </div>
+  <script>
+    setTimeout(function () { location.href = 'http://127.0.0.1:8080/'; }, 6000);
+  </script>
+</body>
+</html>

@@ -1,0 +1,133 @@
+package com.qqbot.console.ui
+
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import com.qqbot.console.Store
+import com.qqbot.console.objects
+import com.qqbot.console.patchOf
+import kotlinx.coroutines.launch
+import org.json.JSONArray
+import org.json.JSONObject
+import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
+
+private val PROVIDERS = listOf("openai", "claude", "gemini")
+private val PROVIDER_LABELS = listOf("OpenAI 兼容（DeepSeek / ChatGPT / Grok / 中转站）", "Claude 原生", "Gemini 原生")
+
+@Composable
+fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
+    val scope = rememberCoroutineScope()
+    val ai = Store.cfg("plugins", "ai_chat") ?: JSONObject()
+    val profiles = ai.optJSONArray("profiles")?.objects().orEmpty()
+    val activeId = ai.optStr("active_profile")
+    val active = profiles.firstOrNull { it.optStr("id") == activeId } ?: profiles.firstOrNull()
+    var editingId by remember { mutableStateOf<String?>(null) }
+    val editing = profiles.firstOrNull { it.optStr("id") == editingId } ?: active
+
+    /** 改选中那一套 profile 的一个字段，整份 profiles 数组一起提交（后端会保留掩码 key）。 */
+    fun saveProfileField(field: String, value: Any) {
+        val target = editing ?: return
+        val arr = JSONArray()
+        profiles.forEach { p ->
+            val copy = JSONObject(p.toString())
+            if (p.optStr("id") == target.optStr("id")) copy.put(field, value)
+            arr.put(copy)
+        }
+        scope.launch { Store.patch(patchOf("plugins", "ai_chat", "profiles", value = arr)) }
+    }
+
+    PageList(padding, scrollBehavior) {
+        group("当前接口") {
+            if (profiles.isEmpty()) {
+                InfoRow("还没有接口", "在网页控制台添加")
+            } else {
+                OverlayDropdownPreference(
+                    title = "使用",
+                    summary = active?.optStr("model"),
+                    items = profiles.map { it.optStr("name").ifBlank { it.optStr("id") } },
+                    selectedIndex = profiles.indexOf(active).coerceAtLeast(0),
+                    onSelectedIndexChange = { i ->
+                        val id = profiles[i].optStr("id")
+                        editingId = id
+                        scope.launch { Store.patch(patchOf("plugins", "ai_chat", "active_profile", value = id), "已切换到 ${profiles[i].optStr("name")}") }
+                    },
+                )
+            }
+        }
+
+        if (editing != null) {
+            group("接口设置 · ${editing.optStr("name")}") {
+                val pIdx = PROVIDERS.indexOf(editing.optStr("provider").ifBlank { "openai" }).coerceAtLeast(0)
+                OverlayDropdownPreference(
+                    title = "协议",
+                    items = PROVIDER_LABELS,
+                    selectedIndex = pIdx,
+                    onSelectedIndexChange = { saveProfileField("provider", PROVIDERS[it]) },
+                )
+                EditPreference("接口地址", editing.optStr("base_url")) { saveProfileField("base_url", it) }
+                EditPreference("模型", editing.optStr("model")) { if (it.isNotBlank()) saveProfileField("model", it) }
+                EditPreference("API Key", editing.optStr("api_key"), secret = true) { if (it.isNotBlank()) saveProfileField("api_key", it) }
+                EditPreference("温度", editing.opt("temperature")?.toString() ?: "0.7", numeric = true) {
+                    it.toDoubleOrNull()?.let { v -> saveProfileField("temperature", v.coerceIn(0.0, 2.0)) }
+                }
+                EditPreference("最大输出 tokens", editing.opt("max_tokens")?.toString() ?: "4096", numeric = true) {
+                    it.toIntOrNull()?.let { v -> saveProfileField("max_tokens", v.coerceIn(64, 8192)) }
+                }
+            }
+        }
+
+        group("人格") {
+            EditPreference("机器人名字", Store.str("config", "bot", "name")) {
+                if (it.isNotBlank()) Store.patch(patchOf("bot", "name", value = it))
+            }
+            EditPreference("人格提示词", ai.optStr("system_prompt"), multiline = true) {
+                Store.patch(patchOf("plugins", "ai_chat", "system_prompt", value = it))
+            }
+        }
+
+        group("什么时候回复") {
+            ConfigSwitch("私聊直接回复", null, "plugins", "ai_chat", "trigger", "private", default = true)
+            ConfigSwitch("群里 @ 才回", null, "plugins", "ai_chat", "trigger", "group_at", default = true)
+            ConfigSwitch("引用它的消息也回", null, "plugins", "ai_chat", "trigger", "group_quote", default = true)
+            val follow = Store.int("config", "plugins", "ai_chat", "trigger", "group_followup_seconds")
+            top.yukonga.miuix.kmp.preference.SwitchPreference(
+                title = "@ 一次后继续对话",
+                summary = if (follow > 0) "唤醒后 $follow 秒内，这个人接着说也会回" else "关闭：每次都要 @ / 叫名字 / 引用才回",
+                checked = follow > 0,
+                onCheckedChange = { on ->
+                    scope.launch { Store.patch(patchOf("plugins", "ai_chat", "trigger", "group_followup_seconds", value = if (on) 120 else 0), null) }
+                },
+            )
+            val aliases = ai.optJSONObject("trigger")?.optJSONArray("group_name_aliases")
+            EditPreference("叫名字也回（别名）", (0 until (aliases?.length() ?: 0)).joinToString("，") { aliases!!.optString(it) }) {
+                val arr = JSONArray(); it.split(",", "，", " ").map(String::trim).filter(String::isNotBlank).forEach(arr::put)
+                Store.patch(patchOf("plugins", "ai_chat", "trigger", "group_name_aliases", value = arr))
+            }
+        }
+
+        group("能力") {
+            ConfigSwitch("联网搜索", "提到「最新/今天/查一下」时先搜再答", "plugins", "ai_chat", "search", "enabled", default = true)
+            ConfigSwitch("识别图片和文件", "发图 / 发文档 / 引用它们时读取内容", "plugins", "ai_chat", "attachments", "enabled", default = true)
+            ConfigSwitch("长代码发成文件", "代码超过 15 行自动存文件发到群里", "plugins", "ai_chat", "files", "enabled", default = true)
+        }
+
+        group("记忆") {
+            EditPreference("记住几轮对话", ai.opt("max_history")?.toString() ?: "8", numeric = true) {
+                it.toIntOrNull()?.let { v -> Store.patch(patchOf("plugins", "ai_chat", "max_history", value = v.coerceIn(1, 100))) }
+            }
+            EditPreference("多久后忘掉（分钟）", ai.opt("history_ttl_minutes")?.toString() ?: "30", numeric = true) {
+                it.toIntOrNull()?.let { v -> Store.patch(patchOf("plugins", "ai_chat", "history_ttl_minutes", value = v.coerceIn(1, 10080))) }
+            }
+            ArrowPreference(
+                title = "清空所有对话记忆",
+                onClick = { scope.launch { com.qqbot.console.Api.post("/api/context/clear"); Store.toast = "已清空" } },
+            )
+        }
+    }
+}
