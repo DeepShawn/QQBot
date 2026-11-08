@@ -48,6 +48,7 @@ import io
 import json
 import math
 import re
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -118,11 +119,12 @@ def account_image_model(image_cfg: dict | None) -> str:
 
     配置里遗留的 gpt-image-1 / dall-e 等 API 模型不能用于账号通道，否则会 404。
     """
-    model = str((image_cfg or {}).get("model") or "").strip()
-    if not model.startswith("gpt-image-"):
+    model = str((image_cfg or {}).get("model") or "").strip().lower()
+    # 账号通道只认 gpt-image-N（可带 -suffix），例如 gpt-image-2、gpt-image-3；
+    # 配置里遗留的 gpt-image-1 / dall-e / 手输跑偏的名字（含点号等）一律回退 gpt-image-2，
+    # 否则会拿无效 model 调 Codex 图片接口得到 404。
+    if not re.fullmatch(r"gpt-image-[0-9]+(?:-[a-z0-9]+)*", model):
         return ACCOUNT_IMAGE_MODEL
-    # 配置里遗留的 API 默认 gpt-image-1 在 Codex 账号通道不可用，回退到 gpt-image-2；
-    # 显式写了其它 gpt-image-N 的照用。
     if model == "gpt-image-1":
         return ACCOUNT_IMAGE_MODEL
     return model
