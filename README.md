@@ -436,6 +436,26 @@ QQ 在 proot 里会持续刷 GPU/dbus 错误，日志可能暴涨（出现过 41
 - 机器人账号不要频繁加群、发广告、改设备，容易触发风控。
 - 手机跑协议层耗电、发热比平时高，在意的话可以把 `protocol` 换成电脑/服务器部署，机器人本体的配置完全通用。
 
+## App 里的「记录」页
+
+- **群内消息**：选群 + 选条数（20/50/100/200/300），点「读取消息」查看最近消息（时间、昵称、内容，图片/文件/引用都有标记）
+- **机器人写的文件**：AI 写代码存下来的文件列表，点开看源码（HTML/SVG/Python 等），单文件上限 2MB
+- **AI 上下文**：每个群/私聊的记忆，点开逐条看完整对话，可一键清空
+
+对应接口（管理台 8080）：`/api/groups`、`/api/messages?group=&count=`、`/api/files`、`/api/files/get?name=`。
+
+## 改代码不用重打运行环境
+
+独立 App 启动时会检查手机存储里的 `Download/DSH-Go/qqbot-src/`：
+如果存在，就把里面的 `bot/`、`scripts/`、`*.sh` 同步进 App 内的运行环境再启动。
+
+```bash
+# 在开发机/手机 DSH 里更新代码后
+rsync -a --exclude data --exclude logs bot/ /sdcard/Download/DSH-Go/qqbot-src/bot/
+cp scripts/*.sh start-all.sh /sdcard/Download/DSH-Go/qqbot-src/   # 按需
+```
+然后在 App 里「彻底关闭」→「开启服务」即可生效（不用重装 900MB 的 rootfs）。
+
 ## 许可证
 
 [MIT](LICENSE) © 2026 DeepShawn

@@ -27,7 +27,7 @@ DATA_DIR = BOT / "data"
 WEB_DIR = BOT / "admin" / "web"
 RUN_DIR = ROOT / "run"
 LOG_DIR = ROOT / "logs"
-HOST, PORT = "127.0.0.1", 8080
+HOST, PORT = "127.0.0.1", int(__import__("os").environ.get("QQBOT_ADMIN_PORT") or 8080)
 
 NAPCAT_CONFIG = Path("/opt/napcat/napcat/config")
 
@@ -303,6 +303,157 @@ def sanitize_config(cfg: dict) -> dict:
     ig = plugins.setdefault("image_gen", {})
     _clamp_int(ig, "timeout_seconds", 10, 300, 120)
     return cfg
+
+
+ONEIBOT_LAST_ERROR = ""
+
+
+def onebot_call(action: str, timeout: float = 15.0, **params) -> dict:
+    """同步调用一次 OneBot 接口（给读群消息用），失败返回 {}。"""
+    import asyncio
+    import json as _json
+
+    try:
+        import websockets
+    except Exception:
+        return {}
+
+    cfg = load_config().get("onebot") or {}
+    url = str(cfg.get("ws_url") or "ws://127.0.0.1:3001")
+    token = str(cfg.get("access_token") or "")
+    if token:
+        url += ("&" if "?" in url else "?") + "access_token=" + token
+
+    async def _run() -> dict:
+        async with websockets.connect(url, open_timeout=5, close_timeout=3) as ws:
+            await ws.send(_json.dumps({"action": action, "params": params, "echo": "x"},
+                                      ensure_ascii=False))
+            while True:
+                data = _json.loads(await asyncio.wait_for(ws.recv(), timeout))
+                if data.get("echo") == "x":
+                    return data
+
+    global ONEIBOT_LAST_ERROR
+    try:
+        ONEIBOT_LAST_ERROR = ""
+        return asyncio.run(_run()) or {}
+    except Exception as e:
+        ONEIBOT_LAST_ERROR = f"{type(e).__name__}: {e}"
+        return {}
+
+
+def _msg_text(message) -> str:
+    """把消息段拼成可读文本。"""
+    if isinstance(message, str):
+        return message
+    parts = []
+    for seg in message or []:
+        if not isinstance(seg, dict):
+            continue
+        t = seg.get("type")
+        d = seg.get("data") or {}
+        if t == "text":
+            parts.append(str(d.get("text") or ""))
+        elif t == "at":
+            parts.append("@" + str(d.get("qq") or ""))
+        elif t == "image":
+            parts.append("[图片]")
+        elif t == "face":
+            parts.append("[表情]")
+        elif t == "file":
+            parts.append("[文件] " + str(d.get("name") or ""))
+        elif t == "reply":
+            parts.append("[引用]")
+        elif t == "record":
+            parts.append("[语音]")
+        elif t == "video":
+            parts.append("[视频]")
+        elif t == "json":
+            parts.append("[卡片]")
+    return "".join(parts).strip()
+
+
+def api_groups() -> dict:
+    res = onebot_call("get_group_list")
+    groups = []
+    for g in res.get("data") or []:
+        if not isinstance(g, dict):
+            continue
+        groups.append({
+            "id": g.get("group_id"),
+            "name": g.get("group_name") or str(g.get("group_id")),
+            "member_count": g.get("member_count") or 0,
+        })
+    groups.sort(key=lambda x: str(x.get("name")))
+    return {"ok": True, "groups": groups, "error": ONEIBOT_LAST_ERROR}
+
+
+def api_messages(group_id: int, count: int = 50, before_seq: int = 0) -> dict:
+    count = max(1, min(int(count), 300))
+    params = {"group_id": group_id, "count": count}
+    if before_seq:
+        params["message_seq"] = before_seq
+    res = onebot_call("get_group_msg_history", **params)
+    msgs = []
+    for m in (res.get("data") or {}).get("messages") or []:
+        if not isinstance(m, dict):
+            continue
+        sender = m.get("sender") or {}
+        msgs.append({
+            "id": m.get("message_id"),
+            "seq": m.get("message_seq") or m.get("real_seq") or 0,
+            "time": m.get("time") or 0,
+            "user_id": sender.get("user_id") or m.get("user_id"),
+            "name": sender.get("card") or sender.get("nickname") or str(sender.get("user_id") or ""),
+            "text": _msg_text(m.get("message")),
+            "group_name": m.get("group_name") or "",
+        })
+    return {"ok": bool(msgs) or res.get("status") == "ok", "group_id": group_id, "messages": msgs}
+
+
+FILES_DIR = DATA_DIR / "files"
+
+
+def api_files() -> dict:
+    items = []
+    try:
+        for f in sorted(FILES_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)[:200]:
+            if not f.is_file():
+                continue
+            st = f.stat()
+            items.append({
+                "name": f.name,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+            })
+    except Exception:
+        pass
+    return {"ok": True, "dir": str(FILES_DIR), "files": items}
+
+
+def api_file_get(name: str) -> dict:
+    name = Path(str(name or "")).name          # 只取文件名，杜绝路径穿越
+    path = FILES_DIR / name
+    if not name or not path.is_file():
+        return {"ok": False, "error": "文件不存在"}
+    st = path.stat()
+    if st.st_size > (2 << 20):
+        return {"ok": False, "error": "文件太大（>2MB），请用文件管理打开"}
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+        binary = False
+    except UnicodeDecodeError:
+        text = ""
+        binary = True
+    return {
+        "ok": True,
+        "name": name,
+        "size": st.st_size,
+        "mtime": st.st_mtime,
+        "binary": binary,
+        "text": text,
+    }
 
 
 def api_patch_config(patch: dict) -> dict:
@@ -704,11 +855,34 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(build_state())
             if path == "/api/context":
                 return self._json(api_context())
+            if path == "/api/groups":
+                return self._json(api_groups())
+            if path == "/api/messages":
+                gid = int((qs.get("group") or ["0"])[0])
+                cnt = int((qs.get("count") or ["50"])[0])
+                seq = int((qs.get("before_seq") or ["0"])[0])
+                if not gid:
+                    return self._error("缺少 group 参数")
+                return self._json(api_messages(gid, cnt, seq))
+            if path == "/api/debug/onebot":
+                res = onebot_call("get_group_list")
+                return self._json({
+                    "ok": bool(res),
+                    "error": ONEIBOT_LAST_ERROR,
+                    "raw_status": res.get("status"),
+                    "groups": len(res.get("data") or []),
+                })
+            if path == "/api/files":
+                return self._json(api_files())
+            if path == "/api/files/get":
+                return self._json(api_file_get((qs.get("name") or [""])[0]))
             if path == "/api/logs":
                 lines = int((qs.get("lines") or ["300"])[0])
                 source = (qs.get("source") or ["bot"])[0]
                 if source == "protocol":
                     target = ROOT / "protocol" / "logs" / "napcat.log"
+                elif source == "adminfile":
+                    target = ROOT / "logs" / "admin.out"
                 elif source == "botfile":
                     target = BOT / "logs" / "bot.log"
                 else:

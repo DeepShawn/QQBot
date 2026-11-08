@@ -212,7 +212,15 @@ object Env {
             "TMPDIR=/tmp", "UV_USE_IO_URING=0",
             "/bin/bash", "-lc",
             // 先起管理台（几秒就好），App 就能马上进主界面；QQ 登录慢慢来
-            "cd /root/workspace/qqbot && bash scripts/admin-start.sh; ./start-all.sh; " +
+            "cd /root/workspace/qqbot && " +
+                // 可选：把手机存储里的代码同步进运行环境（存在才同步）
+                "if [ -d /sdcard/Download/DSH-Go/qqbot-src ]; then " +
+                "echo '[sync] 从 sdcard/Download/DSH-Go/qqbot-src 同步机器人代码'; " +
+                "cp -a /sdcard/Download/DSH-Go/qqbot-src/bot/. /root/workspace/qqbot/bot/ 2>/dev/null; " +
+                "[ -d /sdcard/Download/DSH-Go/qqbot-src/scripts ] && cp -a /sdcard/Download/DSH-Go/qqbot-src/scripts/. /root/workspace/qqbot/scripts/ 2>/dev/null; " +
+                "for f in /sdcard/Download/DSH-Go/qqbot-src/*.sh; do [ -e \"\$f\" ] && cp -a \"\$f\" /root/workspace/qqbot/; done; " +
+                "fi; " +
+                "bash scripts/admin-start.sh; ./start-all.sh; " +
                 "echo '===== qq-stderr.log ====='; tail -n 60 protocol/logs/qq-stderr.log 2>&1; " +
                 "echo '===== napcat.log ====='; tail -n 30 protocol/logs/napcat.log 2>&1; " +
                 "echo '===== env ====='; uname -a; id; ls -la /dev/shm /tmp 2>&1 | head; " +

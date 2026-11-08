@@ -38,6 +38,7 @@ import com.qqbot.console.ui.AiPage
 import com.qqbot.console.ui.GroupPage
 import com.qqbot.console.ui.HomePage
 import com.qqbot.console.ui.MorePage
+import com.qqbot.console.ui.RecordsPage
 import kotlinx.coroutines.delay
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
@@ -52,6 +53,7 @@ import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Community
+import top.yukonga.miuix.kmp.icon.extended.File
 import top.yukonga.miuix.kmp.icon.extended.Home
 import top.yukonga.miuix.kmp.icon.extended.Messages
 import top.yukonga.miuix.kmp.icon.extended.More
@@ -217,6 +219,7 @@ private val TABS = listOf(
     Tab("概览", "机器人控制台", MiuixIcons.Home),
     Tab("AI", "AI 与人格", MiuixIcons.Messages),
     Tab("群管", "群管理", MiuixIcons.Community),
+    Tab("记录", "记录", MiuixIcons.File),
     Tab("更多", "更多", MiuixIcons.More),
 )
 
@@ -262,6 +265,7 @@ private fun MainScreen() {
                     0 -> HomePage(padding, scrollBehavior)
                     1 -> AiPage(padding, scrollBehavior)
                     2 -> GroupPage(padding, scrollBehavior)
+                    3 -> RecordsPage(padding, scrollBehavior)
                     else -> MorePage(padding, scrollBehavior)
                 }
             }
