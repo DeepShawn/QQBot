@@ -141,11 +141,16 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     summary = if (auth.isNotBlank()) "已改用账号登录" else null,
                     secret = true,
                 ) { if (it.isNotBlank()) saveProfileField("api_key", it) }
-                EditPreference("温度", editing.opt("temperature")?.toString() ?: "0.7", numeric = true) {
-                    it.toDoubleOrNull()?.let { v -> saveProfileField("temperature", v.coerceIn(0.0, 2.0)) }
-                }
-                EditPreference("最大输出 tokens", editing.opt("max_tokens")?.toString() ?: "4096", numeric = true) {
-                    it.toIntOrNull()?.let { v -> saveProfileField("max_tokens", v.coerceIn(64, 8192)) }
+                if (auth.isBlank()) {
+                    EditPreference("温度", editing.opt("temperature")?.toString() ?: "0.7", numeric = true) {
+                        it.toDoubleOrNull()?.let { v -> saveProfileField("temperature", v.coerceIn(0.0, 2.0)) }
+                    }
+                    EditPreference("最大输出 tokens", editing.opt("max_tokens")?.toString() ?: "4096", numeric = true) {
+                        it.toIntOrNull()?.let { v -> saveProfileField("max_tokens", v.coerceIn(64, 8192)) }
+                    }
+                } else {
+                    // 账号模式由账号接口决定输出长度，这两个参数不生效（值保留，切回 API Key 还能用）
+                    Hint("账号模式按账号默认输出：温度 / 最大输出 tokens 不生效（不限制输出长度）。")
                 }
             }
         }

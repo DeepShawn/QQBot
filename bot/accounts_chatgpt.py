@@ -463,9 +463,9 @@ def chat(
         raise account_core.AccountError("generic", "没有可发送的消息")
 
     try:
-        max_out = max(1, int(max_tokens or 600))
+        max_out = int(max_tokens) if max_tokens else 0
     except (TypeError, ValueError):
-        max_out = 600
+        max_out = 0
     payload = {
         "model": model_name,
         "store": False,
@@ -476,8 +476,10 @@ def chat(
         "include": ["reasoning.encrypted_content"],
         "tool_choice": "auto",
         "parallel_tool_calls": True,
-        "max_output_tokens": max_out,
     }
+    # 账号订阅模式不限制输出：0 表示不传 max_output_tokens，用账号默认
+    if max_out > 0:
+        payload["max_output_tokens"] = max_out
     # Codex 的推理模型不接受 temperature（传了会 400），这里统一不发
     _ = temperature
 

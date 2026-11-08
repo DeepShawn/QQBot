@@ -170,7 +170,8 @@ class ProvidersAuthRoutingTests(unittest.TestCase):
         self.assertEqual(text, "账号模式回复")
         self.assertEqual(captured["provider"], "claude")
         self.assertEqual(captured["model"], "")
-        self.assertEqual(captured["max_tokens"], 321)
+        # 账号订阅模式不套用 API Key 的 max_tokens（0 = 账号默认/不限制）
+        self.assertEqual(captured["max_tokens"], 0)
         self.assertEqual(captured["timeout"], 12.0)
 
     def test_auth_ignores_provider_validation(self):

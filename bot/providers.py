@@ -380,7 +380,8 @@ def chat(
             str(model or "").strip(),
             msgs,
             _as_float(temperature, "temperature"),
-            _as_int(max_tokens, "max_tokens"),
+            # 账号订阅模式不限制输出长度：0 表示交给账号/模型默认（不套用 API Key 的 max_tokens）
+            0,
             _timeout_value(timeout),
         )
 

@@ -629,19 +629,19 @@ def _build_body(model: str, messages, temperature=None, max_tokens=None) -> dict
     if not wire_messages:
         raise AccountError("generic", "没有可以发送的消息")
     try:
-        token_limit = int(max_tokens) if max_tokens else 8192
+        token_limit = int(max_tokens) if max_tokens else 0
     except (TypeError, ValueError):
-        token_limit = 8192
-    if token_limit <= 0:
-        token_limit = 8192
+        token_limit = 0
     body: dict = {
         "model": model,
         "stream": True,
-        "max_tokens": token_limit,
         "messages": wire_messages,
         # 关掉思考块：这样文本回复简单，temperature 也不会被拒。
         "thinking": {"type": "disabled"},
     }
+    # 账号订阅模式不限制输出：0 表示不传 max_tokens，用账号默认
+    if token_limit > 0:
+        body["max_tokens"] = token_limit
     if system_parts:
         body["system"] = "\n\n".join(system_parts)
     if temperature is not None:

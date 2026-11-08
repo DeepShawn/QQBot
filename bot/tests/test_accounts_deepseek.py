@@ -508,10 +508,17 @@ class InferenceTests(unittest.TestCase):
         self.assertEqual(body["messages"][0]["content"], [{"type": "text", "text": "你好"}])
 
     def test_build_body_default_max_tokens(self):
+        # 账号订阅模式：不传 max_tokens，交给账号默认（不限制）
         body = deepseek._build_body("deepseek-flash", [{"role": "user", "content": "hi"}])
-        self.assertEqual(body["max_tokens"], 8192)
+        self.assertNotIn("max_tokens", body)
         self.assertNotIn("temperature", body)
         self.assertNotIn("system", body)
+        # 显式给 0 也一样不传
+        body0 = deepseek._build_body("deepseek-flash", [{"role": "user", "content": "hi"}], max_tokens=0)
+        self.assertNotIn("max_tokens", body0)
+        # 显式大于 0 才传
+        body2 = deepseek._build_body("deepseek-flash", [{"role": "user", "content": "hi"}], max_tokens=512)
+        self.assertEqual(body2["max_tokens"], 512)
 
     def test_build_body_rejects_empty(self):
         with self.assertRaises(deepseek.AccountError):

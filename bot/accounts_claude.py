@@ -191,6 +191,11 @@ def _headers(access: str) -> dict:
     }
 
 
+def _account_max_tokens(model: str) -> int:
+    """账号订阅模式不限制输出：Claude 要求显式 max_tokens，这里给模型的最大输出。"""
+    return 8192 if "haiku" in str(model or "").lower() else 32000
+
+
 def chat(
     record: dict,
     model: str,
@@ -224,9 +229,11 @@ def chat(
         raise account_core.AccountError("generic", "没有可发送的消息")
 
     try:
-        max_out = max(1, int(max_tokens or 600))
+        max_out = int(max_tokens) if max_tokens else 0
     except (TypeError, ValueError):
-        max_out = 600
+        max_out = 0
+    if max_out <= 0:
+        max_out = _account_max_tokens(model_name)
     _ = temperature  # 订阅通道新模型不接受 temperature，统一不发
 
     payload = {

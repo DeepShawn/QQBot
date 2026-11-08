@@ -225,13 +225,15 @@ object Env {
                 "cp -a /sdcard/Download/DSH-Go/qqbot-src/bot/. /root/workspace/qqbot/bot/ 2>/dev/null; " +
                 "[ -d /sdcard/Download/DSH-Go/qqbot-src/scripts ] && cp -a /sdcard/Download/DSH-Go/qqbot-src/scripts/. /root/workspace/qqbot/scripts/ 2>/dev/null; " +
                 "for f in /sdcard/Download/DSH-Go/qqbot-src/*.sh; do [ -e \"\$f\" ] && cp -a \"\$f\" /root/workspace/qqbot/; done; " +
+                // 手机存储（FUSE）没有执行位，cp -a 同步进来的脚本可能没有 +x，这里统一补上
+                "chmod +x /root/workspace/qqbot/*.sh /root/workspace/qqbot/scripts/*.sh /root/workspace/qqbot/protocol/*.sh 2>/dev/null; " +
                 "[ -f /tmp/qqbot-sync-keep/config.json ] && mv -f /tmp/qqbot-sync-keep/config.json /root/workspace/qqbot/bot/config.json 2>/dev/null; " +
                 "[ -f /tmp/qqbot-sync-keep/update-meta.json ] && mv -f /tmp/qqbot-sync-keep/update-meta.json /root/workspace/qqbot/bot/.update-meta.json 2>/dev/null; " +
                 "if [ -d /tmp/qqbot-sync-keep/data ]; then rm -rf /root/workspace/qqbot/bot/data; mv /tmp/qqbot-sync-keep/data /root/workspace/qqbot/bot/data 2>/dev/null; fi; " +
                 "rm -rf /tmp/qqbot-sync-keep 2>/dev/null; " +
                 "echo '[sync] 已保留用户配置（config.json / data / .update-meta.json）'; " +
                 "fi; " +
-                "bash scripts/admin-start.sh; ./start-all.sh; " +
+                "bash scripts/admin-start.sh; bash ./start-all.sh; " +
                 "echo '===== qq-stderr.log ====='; tail -n 60 protocol/logs/qq-stderr.log 2>&1; " +
                 "echo '===== napcat.log ====='; tail -n 30 protocol/logs/napcat.log 2>&1; " +
                 "echo '===== env ====='; uname -a; id; ls -la /dev/shm /tmp 2>&1 | head; " +

@@ -3,6 +3,7 @@ package com.qqbot.console.ui
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,12 +17,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.qqbot.console.ProotService
 import com.qqbot.console.Store
 import com.qqbot.console.patchOf
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
@@ -39,6 +42,12 @@ fun HomePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val needLogin = proto?.optBoolean("need_login") == true
     val webui = proto?.optStr("webui_url").orEmpty()
 
+    // 后台希望服务在跑、但实际还没起来：多半是刚重启/被系统清理后正在恢复，给个提示免得用户反复点
+    val desired = Store.obj("control", "desired")
+    val wantBot = desired?.optStr("bot") == "running"
+    val wantProtocol = desired?.optStr("protocol") == "running"
+    val recovering = (wantBot && !running) || (wantProtocol && !qqUp)
+
     var confirmOff by remember { mutableStateOf(false) }
 
     val (title, sub, color) = when {
@@ -52,6 +61,18 @@ fun HomePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     PageList(padding, scrollBehavior) {
         group {
             BigStatus(title, sub, color)
+        }
+
+        if (recovering) {
+            group("正在恢复") {
+                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                    Text(
+                        "服务正在启动或自动恢复中，约 1–2 分钟，请稍候；不要重复点「开启服务」。",
+                        fontSize = 14.sp,
+                        color = Warn,
+                    )
+                }
+            }
         }
 
         if (needLogin) {

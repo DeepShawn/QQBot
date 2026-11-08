@@ -52,6 +52,7 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val scope = rememberCoroutineScope()
     var logs by remember { mutableStateOf<String?>(null) }
     var confirmReinstall by remember { mutableStateOf(false) }
+    var showPython by remember { mutableStateOf(false) }
 
     // ---------- 后台运行 ----------
     var keepAlive by remember { mutableStateOf(ProotService.keepAliveEnabled(ctx)) }
@@ -289,6 +290,14 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             item { Hint("机器人代码已经更新。重启服务后新代码生效；如果更新了管理台，重启 App 里的服务才会生效。") }
         }
 
+        group("工具") {
+            ArrowPreference(
+                title = "运行 Python 代码",
+                summary = "在机器人运行环境里跑一段临时脚本，看输出 / 错误",
+                onClick = { showPython = true },
+            )
+        }
+
         group("其它") {
             ArrowPreference(
                 title = "网页控制台",
@@ -305,6 +314,10 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 onClick = { confirmReinstall = true },
             )
         }
+    }
+
+    if (showPython) {
+        PythonRunnerDialog(onDismiss = { showPython = false })
     }
 
     ConfirmDialog(

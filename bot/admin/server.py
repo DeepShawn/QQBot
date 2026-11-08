@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -1281,6 +1284,245 @@ def api_models(profile_id: str = "") -> dict:
     return {"ok": True, "source": "api", "models": models, "default": default}
 
 
+# ---------------------------------------------------------------- Python 运行 API
+PYTHON_TIMEOUT_DEFAULT = 30
+PYTHON_TIMEOUT_MIN = 1
+PYTHON_TIMEOUT_MAX = 300
+PYTHON_OUTPUT_LIMIT = 200 * 1024          # stdout / stderr 各截断 200KB
+PYTHON_CODE_LIMIT = 1024 * 1024           # 提交的源码上限 1MB
+PYTHON_TRUNC_HINT = "\n…（输出超过 200KB，已截断）"
+PYTHON_ALLOWED_DIRS = (ROOT, Path("/root/workspace/qqbot"), Path("/sdcard/Download/DSH-Go"))
+
+
+class PythonRunError(Exception):
+    """Python 运行接口的内部异常：消息是给用户看的中文短句。"""
+
+
+def _python_timeout(value) -> int:
+    try:
+        n = int(value)
+    except Exception:
+        return PYTHON_TIMEOUT_DEFAULT
+    return max(PYTHON_TIMEOUT_MIN, min(PYTHON_TIMEOUT_MAX, n))
+
+
+def _path_within(path, base) -> bool:
+    try:
+        Path(path).resolve().relative_to(Path(base).resolve())
+        return True
+    except Exception:
+        return False
+
+
+def _python_allowed_dirs() -> list[Path]:
+    out: list[Path] = []
+    for raw in PYTHON_ALLOWED_DIRS:
+        try:
+            resolved = Path(raw).resolve()
+        except Exception:
+            continue
+        if resolved not in out:
+            out.append(resolved)
+    return out
+
+
+def _resolve_python_path(raw) -> Path:
+    """path 模式的路径校验：必须是允许目录下、解析后仍在目录内的 .py 文件。"""
+    text = str(raw or "").strip()
+    if not text:
+        raise PythonRunError("缺少要运行的文件路径")
+    target = Path(text)
+    if not target.is_absolute():
+        target = ROOT / target
+    try:
+        resolved = target.resolve(strict=True)
+    except FileNotFoundError:
+        raise PythonRunError("找不到这个文件") from None
+    except Exception:
+        raise PythonRunError("这个文件路径不能用") from None
+    if not resolved.is_file():
+        raise PythonRunError("这个路径不是文件")
+    if resolved.suffix.lower() != ".py":
+        raise PythonRunError("只能运行 .py 文件")
+    if not any(_path_within(resolved, base) for base in _python_allowed_dirs()):
+        raise PythonRunError("这个文件不在允许运行的目录里")
+    return resolved
+
+
+def _decode_stream(raw: bytes, truncated: bool) -> str:
+    text = raw.decode("utf-8", "replace")
+    if truncated:
+        text += PYTHON_TRUNC_HINT
+    return text
+
+
+def _read_stream_limited(stream, limit: int, box: dict, key: str) -> None:
+    """读子进程输出，只保留前 limit 字节；超出的丢弃但继续读，避免管道堵死。"""
+    buf = bytearray()
+    truncated = False
+    try:
+        while True:
+            chunk = stream.read(65536)
+            if not chunk:
+                break
+            if len(buf) < limit:
+                room = limit - len(buf)
+                if len(chunk) > room:
+                    buf.extend(chunk[:room])
+                    truncated = True
+                else:
+                    buf.extend(chunk)
+            else:
+                truncated = True
+    except Exception:
+        pass
+    finally:
+        try:
+            stream.close()
+        except Exception:
+            pass
+        box[key] = bytes(buf)
+        box[key + "_truncated"] = truncated
+
+
+def _kill_python_process(proc) -> None:
+    """超时后杀掉整个进程组（脚本自己起的子进程也一起结束）。"""
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        return
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+
+def _execute_python(argv: list, timeout: int) -> dict:
+    """用 sys.executable 跑一个 python 命令（不用 shell），返回结果字典。"""
+    env = os.environ.copy()
+    # 手机环境的 locale 可能是 C，固定子进程用 UTF-8，避免 print 中文报编码错
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.setdefault("PYTHONUTF8", "1")
+    start = time.monotonic()
+    try:
+        proc = subprocess.Popen(
+            list(argv),
+            cwd=str(ROOT),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            shell=False,
+            start_new_session=True,
+            env=env,
+        )
+    except Exception:
+        raise PythonRunError("启动 Python 解释器失败，检查运行环境") from None
+    out_box: dict = {}
+    err_box: dict = {}
+    reader_out = threading.Thread(
+        target=_read_stream_limited,
+        args=(proc.stdout, PYTHON_OUTPUT_LIMIT, out_box, "data"),
+        daemon=True,
+    )
+    reader_err = threading.Thread(
+        target=_read_stream_limited,
+        args=(proc.stderr, PYTHON_OUTPUT_LIMIT, err_box, "data"),
+        daemon=True,
+    )
+    try:
+        reader_out.start()
+        reader_err.start()
+        timed_out = False
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            _kill_python_process(proc)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+        reader_out.join(timeout=2)
+        reader_err.join(timeout=2)
+        duration_ms = int((time.monotonic() - start) * 1000)
+        stdout = _decode_stream(out_box.get("data", b""), bool(out_box.get("data_truncated")))
+        stderr = _decode_stream(err_box.get("data", b""), bool(err_box.get("data_truncated")))
+        exit_code = proc.returncode if proc.returncode is not None else -1
+        result = {
+            "ok": True,
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": int(exit_code),
+            "duration_ms": duration_ms,
+            "timed_out": bool(timed_out),
+        }
+        if timed_out:
+            result["message"] = f"运行超时（超过 {timeout} 秒），已终止；输出可能不完整"
+        return result
+    finally:
+        for stream in (proc.stdout, proc.stderr):
+            try:
+                stream.close()
+            except Exception:
+                pass
+        if proc.poll() is None:
+            _kill_python_process(proc)
+
+
+def _run_python_source(code: str, timeout: int) -> dict:
+    tmp_path = None
+    try:
+        fd, tmp_name = tempfile.mkstemp(prefix="qqbot-py-", suffix=".py")
+        tmp_path = Path(tmp_name)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(code)
+        return _execute_python([sys.executable, "-I", "-u", str(tmp_path)], timeout)
+    except PythonRunError:
+        raise
+    except OSError:
+        raise PythonRunError("写临时文件失败，检查磁盘空间") from None
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _run_python_file(path: Path, timeout: int) -> dict:
+    return _execute_python([sys.executable, "-I", "-u", str(path)], timeout)
+
+
+def api_python_run(body: dict) -> dict:
+    """POST /api/python/run：code 或 path 二选一（code 优先），在本机跑 Python。"""
+    body = body if isinstance(body, dict) else {}
+    timeout = _python_timeout(body.get("timeout"))
+    raw_code = body.get("code")
+    if isinstance(raw_code, str) and raw_code.strip():
+        try:
+            too_long = len(raw_code.encode("utf-8", "replace")) > PYTHON_CODE_LIMIT
+        except Exception:
+            too_long = True
+        if too_long:
+            return {"ok": False, "error": "代码太长（上限 1MB）"}
+        try:
+            return _run_python_source(raw_code, timeout)
+        except PythonRunError as e:
+            return {"ok": False, "error": str(e)}
+    raw_path = body.get("path")
+    if isinstance(raw_path, str) and raw_path.strip():
+        try:
+            target = _resolve_python_path(raw_path)
+        except PythonRunError as e:
+            return {"ok": False, "error": str(e)}
+        try:
+            return _run_python_file(target, timeout)
+        except PythonRunError as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": False, "error": "缺少要运行的代码：在代码框里写 Python，或指定一个 .py 文件"}
+
+
 # ---------------------------------------------------------------- HTTP
 MIME = {
     ".html": "text/html; charset=utf-8",
@@ -1424,6 +1666,9 @@ class Handler(BaseHTTPRequestHandler):
                                             "退出登录失败，请稍后再试"))
             if path == "/api/update/bot":
                 return self._json(_api_safe(api_update_start, "启动更新失败，请稍后再试"))
+            if path == "/api/python/run":
+                return self._json(_api_safe(lambda: api_python_run(body),
+                                            "运行 Python 失败，请稍后再试"))
             return self._error("not found", 404)
         except subprocess.TimeoutExpired:
             return self._error("操作超时（脚本仍可能在后台继续执行，稍后刷新看状态）", 500)
