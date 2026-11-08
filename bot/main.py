@@ -23,7 +23,18 @@ from config import Config  # noqa: E402
 from context import Context  # noqa: E402
 from dispatcher import Dispatcher  # noqa: E402
 from onebot import OneBotClient  # noqa: E402
-from plugins import ai_chat, commands, dev_tools, group_admin, image_gen, keyword, python_run  # noqa: E402
+import scheduled  # noqa: E402
+
+from plugins import (  # noqa: E402
+    ai_chat,
+    commands,
+    dev_tools,
+    group_admin,
+    image_gen,
+    keyword,
+    python_run,
+    scheduled as scheduled_plugin,
+)
 
 
 def setup_logging(level: str, log_file: Path) -> logging.Logger:
@@ -57,7 +68,16 @@ async def async_main(config_path: Path) -> int:
     ctx.started_at = time.time()
 
     dispatcher = Dispatcher(ctx)
-    for module in (commands, group_admin, keyword, dev_tools, python_run, image_gen, ai_chat):
+    for module in (
+        commands,
+        group_admin,
+        keyword,
+        dev_tools,
+        python_run,
+        image_gen,
+        ai_chat,
+        scheduled_plugin,
+    ):
         dispatcher.register(module.Plugin(ctx))
 
     ob = config.get("onebot", default={}) or {}
@@ -102,10 +122,20 @@ async def async_main(config_path: Path) -> int:
                 pass
             await asyncio.sleep(3)
 
+    async def scheduled_loop():
+        """定时发送：每 30 秒检查一次是否到点（状态文件防重复）。"""
+        while True:
+            try:
+                await scheduled.tick(ctx)
+            except Exception as e:
+                logger.warning("定时发送 tick 异常: %s", e)
+            await asyncio.sleep(30)
+
     tasks = [
         asyncio.create_task(api.run(), name="onebot"),
         asyncio.create_task(config_watcher(), name="config"),
         asyncio.create_task(heartbeat(), name="heartbeat"),
+        asyncio.create_task(scheduled_loop(), name="scheduled"),
     ]
     stop = asyncio.Event()
 

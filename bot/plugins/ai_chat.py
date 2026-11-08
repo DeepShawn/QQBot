@@ -398,12 +398,41 @@ class Plugin(PluginBase):
                     attachments.append({"type": t, "data": qseg.get("data") or {}, "quoted": True})
         return attachments
 
+    @staticmethod
+    def _attachment_max_bytes(att: dict, cfg: dict) -> int:
+        """附件下载大小上限（0 = 不限）。
+
+        - attachments.ignore_size_limit 显式配置优先（true → 不限，false → 用 max_file_bytes）；
+        - 未配置时：账号套餐模式（ai_chat.auth 非空）不限；API Key 模式沿用
+          max_file_bytes（默认 15MB）。
+        """
+        try:
+            default_max = int(att.get("max_file_bytes", 15_000_000))
+        except (TypeError, ValueError):
+            default_max = 15_000_000
+        if default_max <= 0:
+            default_max = 15_000_000
+        override = att.get("ignore_size_limit")
+        if isinstance(override, str):
+            value = override.strip().lower()
+            if value in ("1", "true", "yes", "on"):
+                override = True
+            elif value in ("0", "false", "no", "off"):
+                override = False
+            else:
+                override = None
+        if isinstance(override, bool):
+            return 0 if override else default_max
+        if str(cfg.get("auth") or "").strip():
+            return 0  # 账号套餐模式：机器人自己不再卡附件大小
+        return default_max
+
     async def _attachment_context(self, event, attachments: list[dict], cfg: dict) -> str:
         att = cfg.get("attachments") or {}
         if not attachments or not att.get("enabled", True):
             return ""
         max_images = int(att.get("max_images", 3))
-        max_bytes = int(att.get("max_file_bytes", 15_000_000))
+        max_bytes = self._attachment_max_bytes(att, cfg)
         max_chars = int(att.get("max_file_chars", 4000))
         parts: list[str] = []
         images: list[bytes] = []

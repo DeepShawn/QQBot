@@ -11,6 +11,7 @@
 - fetch 只允许 http / https，file://、ftp://、data: 等一律拒绝；重定向逐跳校验，
   allowed_hosts 非空时只放行白名单主机（子域也算），用于防 SSRF；
 - 下载上限 max_bytes：先看 Content-Length，再边读边累计，超限抛 MediaError；
+  max_bytes <= 0 表示不限制（账号套餐模式用），默认仍是 20MB；
 - 默认 20s 超时，全程内存处理，不落盘；
 - docx / pptx / xlsx 只用标准库 zipfile + xml.etree 解析 OOXML；
 - pdf 依赖可选的 pypdf，没装时返回 error="需要安装 pypdf"，不抛异常；
@@ -134,6 +135,7 @@ def fetch(url: str, max_bytes: int = DEFAULT_MAX_BYTES, timeout: float = DEFAULT
     - data 全在内存里，不写磁盘；
     - 只允许 http(s)，否则抛 MediaError；
     - 超过 max_bytes 抛 MediaError（Content-Length 超限会提前拒绝）；
+    - max_bytes <= 0 表示不限制大小（账号套餐模式），默认 20MB；
     - allowed_hosts 非空时只允许这些 host（含子域），重定向也会校验。
     """
     url = _validate_url(url, allowed_hosts)
@@ -142,8 +144,6 @@ def fetch(url: str, max_bytes: int = DEFAULT_MAX_BYTES, timeout: float = DEFAULT
         timeout = float(timeout)
     except (TypeError, ValueError) as e:
         raise MediaError("max_bytes / timeout 参数不合法") from e
-    if max_bytes <= 0:
-        raise MediaError("max_bytes 必须大于 0")
     if timeout <= 0:
         raise MediaError("timeout 必须大于 0")
 
@@ -163,8 +163,10 @@ def fetch(url: str, max_bytes: int = DEFAULT_MAX_BYTES, timeout: float = DEFAULT
             raw_ctype = resp.headers.get("Content-Type") or ""
             content_type = raw_ctype.split(";", 1)[0].strip().lower() or "application/octet-stream"
 
+            # max_bytes <= 0 表示不限制（账号套餐模式）；正数才做上限检查。
+            unlimited = max_bytes <= 0
             length = (resp.headers.get("Content-Length") or "").strip()
-            if length.isdigit() and int(length) > max_bytes:
+            if not unlimited and length.isdigit() and int(length) > max_bytes:
                 raise MediaError(f"文件超过大小上限（上限 {max_bytes} 字节）")
 
             chunks: list[bytes] = []
@@ -174,7 +176,7 @@ def fetch(url: str, max_bytes: int = DEFAULT_MAX_BYTES, timeout: float = DEFAULT
                 if not chunk:
                     break
                 total += len(chunk)
-                if total > max_bytes:
+                if not unlimited and total > max_bytes:
                     raise MediaError(f"文件超过大小上限（上限 {max_bytes} 字节）")
                 chunks.append(chunk)
     except MediaError:

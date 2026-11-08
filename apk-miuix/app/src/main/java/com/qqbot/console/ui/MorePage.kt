@@ -59,6 +59,7 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var showPlugins by remember { mutableStateOf(false) }
     var showTasks by remember { mutableStateOf(false) }
     var showSkills by remember { mutableStateOf(false) }
+    var showScheduled by remember { mutableStateOf(false) }
 
     // 全屏管理页：提前返回，页面自己带「返回更多」
     if (showKeywords) {
@@ -75,6 +76,10 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     }
     if (showSkills) {
         SkillManagerPage(padding, scrollBehavior) { showSkills = false }
+        return
+    }
+    if (showScheduled) {
+        ScheduledMessagePage(padding, scrollBehavior) { showScheduled = false }
         return
     }
 
@@ -391,6 +396,11 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 title = "技能",
                 summary = "管理 AI 技能（Markdown 文件），可新建 / 编辑 / 删除",
                 onClick = { showSkills = true },
+            )
+            ArrowPreference(
+                title = "定时消息",
+                summary = "每隔一段时间自动发一条问候（语言模型 + 画图模型）",
+                onClick = { showScheduled = true },
             )
             ArrowPreference(
                 title = "运行 Python 代码",

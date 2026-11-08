@@ -141,6 +141,16 @@ DEFAULTS = {
             "push_groups": [],
             "caption": "🎨 画好了",
         },
+        "scheduled": {
+            # 定时发送：默认每 301 分钟（5 小时 01 分）发一条问候+图
+            "enabled": True,
+            "interval_minutes": 301,
+            # auto = 最近的私聊，没有则 bot.admins 第一个；也可 private/group + target_id
+            "target_type": "auto",
+            "target_id": 0,
+            "use_image": True,
+            "image_size": "1024x1024",
+        },
         "group_admin": {
             "enabled": True,
             "admin_commands": True,

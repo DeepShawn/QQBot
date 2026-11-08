@@ -208,6 +208,14 @@
     },
     "skills": {
       "enabled": true
+    },
+    "scheduled": {
+      "enabled": true,
+      "interval_minutes": 301,
+      "target_type": "auto",
+      "target_id": 0,
+      "use_image": true,
+      "image_size": "1024x1024"
     }
   },
   "ai_chat": {}
