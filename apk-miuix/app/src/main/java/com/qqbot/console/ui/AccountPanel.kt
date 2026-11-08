@@ -485,7 +485,10 @@ private val KNOWN_BROWSERS = listOf(
 /**
  * 强制用浏览器打开登录链接。手机上装了 ChatGPT / Claude 等 AI App 时，
  * 默认的 ACTION_VIEW 可能被它们接管，OAuth 的本地回调就收不到；这里用 setPackage
- * 指定真实浏览器。一个浏览器都没找到时才退回系统默认。
+ * 指定真实浏览器。
+ *
+ * 优先级：Chrome（用户默认浏览器）→ 其它常见浏览器 → 系统默认浏览器 → 默认 ACTION_VIEW。
+ * 不能先把 CATEGORY_APP_BROWSER 排前面：小米浏览器也会注册这个类别，会抢在 Chrome 前面。
  */
 private fun openInBrowser(ctx: Context, url: String) {
     val uri = Uri.parse(url)
@@ -493,14 +496,26 @@ private fun openInBrowser(ctx: Context, url: String) {
     val view = Intent(Intent.ACTION_VIEW, uri)
 
     // 能处理 https 链接的应用
-    val handlers: List<String> = try {
-        pm.queryIntentActivities(view, PackageManager.MATCH_ALL).map { it.activityInfo.packageName }
+    val handlers: Set<String> = try {
+        pm.queryIntentActivities(view, PackageManager.MATCH_ALL).map { it.activityInfo.packageName }.toSet()
     } catch (_: Exception) {
-        emptyList()
+        emptySet()
     }
 
-    // 先收集系统认定的浏览器（CATEGORY_APP_BROWSER），再按常见包名补齐
     val candidates = LinkedHashSet<String>()
+    // 1) 明确优先 Chrome / 常见浏览器（顺序即优先级）
+    KNOWN_BROWSERS.forEach { pkg -> if (pkg in handlers) candidates += pkg }
+    // 2) 系统默认浏览器（如果不在上面的列表里）
+    try {
+        pm.resolveActivity(
+            Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE),
+            PackageManager.MATCH_DEFAULT_ONLY,
+        )?.activityInfo?.packageName?.let { pkg ->
+            if (pkg in handlers && pkg !in candidates) candidates += pkg
+        }
+    } catch (_: Exception) {
+    }
+    // 3) 其它在系统里注册为浏览器的应用
     try {
         pm.queryIntentActivities(
             Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_APP_BROWSER),
@@ -511,14 +526,17 @@ private fun openInBrowser(ctx: Context, url: String) {
         }
     } catch (_: Exception) {
     }
-    KNOWN_BROWSERS.forEach { pkg -> if (pkg in handlers) candidates += pkg }
 
     for (pkg in candidates) {
         try {
             ctx.startActivity(
                 Intent(Intent.ACTION_VIEW, uri).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
-            Store.toast = "已用浏览器打开，请完成登录后回到 App"
+            Store.toast = if (pkg.startsWith("com.android.chrome") || pkg.startsWith("com.chrome.")) {
+                "已用 Chrome 打开，请完成登录后回到 App"
+            } else {
+                "已用浏览器打开，请完成登录后回到 App"
+            }
             return
         } catch (_: Exception) {
             // 这个包打不开就试下一个

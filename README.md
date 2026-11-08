@@ -483,6 +483,7 @@ App 的「接口设置」里：
 - 登录令牌只保存在手机 `bot/data/accounts.json`（权限 600），不会上传到任何地方。
 - Gemini 需要账号地区支持 Gemini Code Assist；DeepSeek 走 `platform.deepseek.com` 授权。
 - 浏览器和机器人要在同一台设备上（回调地址是 `127.0.0.1`）；用另一台电脑打开网页控制台时，选「粘贴网址 / 验证码」的方式完成登录。
+- 登录会**优先用 Chrome 打开**（没装 Chrome 就用系统默认浏览器）；不要用 ChatGPT / Claude 等官方 App 登录，App 的登录态不能授权给机器人。
 
 ## 十一、自动更新
 
