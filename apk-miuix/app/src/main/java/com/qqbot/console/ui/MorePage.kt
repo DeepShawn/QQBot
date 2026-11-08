@@ -27,6 +27,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.qqbot.console.AccountsStore
 import com.qqbot.console.Api
 import com.qqbot.console.AppUpdates
 import com.qqbot.console.BotUpdates
@@ -43,6 +44,7 @@ import org.json.JSONObject
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -80,6 +82,9 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var keepAlive by remember { mutableStateOf(ProotService.keepAliveEnabled(ctx)) }
     // 每次重组都读一次，用户从系统设置回来时能立刻看到新状态（调用很轻）
     val batteryIgnored = isIgnoringBatteryOptimizations(ctx)
+
+    // 画图账号要用到 ChatGPT 账号的连接状态
+    LaunchedEffect(Unit) { AccountsStore.refresh() }
 
     // ---------- 更新 ----------
     var autoCheck by remember { mutableStateOf(AppUpdates.autoCheckEnabled(ctx)) }
@@ -173,16 +178,70 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
 
         group("画图") {
             ConfigSwitch("启用", "说「画一张…」就生成图片发到群里", "plugins", "image_gen", "enabled")
-            EditPreference("模型", ig.optStr("model")) {
+
+            val drawAuth = ig.optStr("auth")
+            val chatgptAccount = AccountsStore.find("chatgpt")
+            val useChatgpt = drawAuth == "chatgpt"
+            val apiModels = listOf("gpt-image-1", "dall-e-3", "dall-e-2")
+            val modelOptions = if (useChatgpt) listOf("gpt-image-2") else apiModels
+            val currentModel = ig.optStr("model").ifBlank { modelOptions.first() }
+
+            OverlayDropdownPreference(
+                title = "画图账号",
+                summary = when {
+                    !useChatgpt -> "不使用账号（用图片 API Key）"
+                    chatgptAccount.signedIn ->
+                        "ChatGPT 账号" + if (chatgptAccount.account.isBlank()) "" else "（${chatgptAccount.account}）"
+                    else -> "ChatGPT 账号 · 未连接，先去 AI 账号连接"
+                },
+                items = listOf("不使用（用图片 API Key）", "ChatGPT 账号"),
+                selectedIndex = if (useChatgpt) 1 else 0,
+                onSelectedIndexChange = { i ->
+                    val toChatgpt = i == 1
+                    val model = if (toChatgpt) {
+                        "gpt-image-2"
+                    } else {
+                        ig.optStr("model").takeIf { it in apiModels } ?: "gpt-image-1"
+                    }
+                    val values = JSONObject()
+                        .put("auth", if (toChatgpt) "chatgpt" else "")
+                        .put("model", model)
+                    scope.launch {
+                        Store.patch(
+                            patchOf("plugins", "image_gen", value = values),
+                            if (toChatgpt) "画图改用 ChatGPT 账号" else "画图改用图片 API Key",
+                        )
+                    }
+                },
+            )
+
+            OverlayDropdownPreference(
+                title = "模型",
+                summary = currentModel,
+                items = modelOptions,
+                selectedIndex = modelOptions.indexOf(currentModel).coerceAtLeast(0),
+                onSelectedIndexChange = { i ->
+                    scope.launch {
+                        Store.patch(patchOf("plugins", "image_gen", "model", value = modelOptions[i]), "画图模型已改为 ${modelOptions[i]}")
+                    }
+                },
+            )
+            EditPreference("手动填写模型名", ig.optStr("model"), summary = "下拉里没有的模型可以在这里填") {
                 if (it.isNotBlank()) Store.patch(patchOf("plugins", "image_gen", "model", value = it))
             }
-            EditPreference("接口地址", ig.optStr("base_url"), summary = "留空跟随 AI 接口") {
+
+            EditPreference(
+                "接口地址",
+                ig.optStr("base_url"),
+                summary = if (useChatgpt) "留空 = OpenAI 官方；账号模式下不需要填" else "留空 = OpenAI 官方",
+            ) {
                 Store.patch(patchOf("plugins", "image_gen", "base_url", value = it))
             }
             EditPreference("API Key", ig.optStr("api_key"), secret = true) {
                 if (it.isNotBlank()) Store.patch(patchOf("plugins", "image_gen", "api_key", value = it))
             }
         }
+        item { Hint("画图账号和主对话账号独立：主对话可以用 Claude，画图用 ChatGPT 账号。账号模式需先在 AI 账号连接 ChatGPT。") }
 
         group("日志") {
             ArrowPreference(

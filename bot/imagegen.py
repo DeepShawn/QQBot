@@ -52,7 +52,19 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-__all__ = ["ImageGenError", "generate", "generate_with_account", "generate_for_ai"]
+__all__ = [
+    "ImageGenError",
+    "generate",
+    "generate_with_account",
+    "generate_for_ai",
+    "resolve_image_mode",
+    "account_image_model",
+    "DEFAULT_IMAGE_BASE_URL",
+    "DEFAULT_IMAGE_MODEL",
+    "ACCOUNT_IMAGE_MODEL",
+    "ERROR_IMAGE_CONFIG",
+    "ERROR_IMAGE_ACCOUNT",
+]
 
 USER_AGENT = "qqbot-imagegen/1.0"
 
@@ -83,6 +95,88 @@ _PROVIDER_ALIASES = {
 
 class ImageGenError(RuntimeError):
     """文生图失败（配置错误、网络/超时、HTTP 错误、返回格式异常、无图片）。"""
+
+
+# 画图配置（与主对话 ai_chat 解耦）
+DEFAULT_IMAGE_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_IMAGE_MODEL = "gpt-image-1"
+ACCOUNT_IMAGE_MODEL = "gpt-image-2"
+ERROR_IMAGE_CONFIG = "画图需要：在画图设置里连接 ChatGPT 账号，或单独填图片 API Key"
+ERROR_IMAGE_ACCOUNT = "画图只支持 ChatGPT 账号；其他账号请填图片 API Key"
+
+
+def _truthy(value) -> bool:
+    if value is True:
+        return True
+    if value is False or value is None:
+        return False
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def account_image_model(image_cfg: dict | None) -> str:
+    """账号画图的模型：只接受 gpt-image-2 系（Codex 图片后端），其它值回退默认。
+
+    配置里遗留的 gpt-image-1 / dall-e 等 API 模型不能用于账号通道，否则会 404。
+    """
+    model = str((image_cfg or {}).get("model") or "").strip()
+    if not model.startswith("gpt-image-"):
+        return ACCOUNT_IMAGE_MODEL
+    # 配置里遗留的 API 默认 gpt-image-1 在 Codex 账号通道不可用，回退到 gpt-image-2；
+    # 显式写了其它 gpt-image-N 的照用。
+    if model == "gpt-image-1":
+        return ACCOUNT_IMAGE_MODEL
+    return model
+
+
+def resolve_image_mode(ai_cfg: dict | None, image_cfg: dict | None) -> dict:
+    """画图分发决策（插件与 AI 工具共用）。
+
+    返回：
+    - {"mode": "account", "auth": "chatgpt", "model": "gpt-image-2"}
+    - {"mode": "api", "api_key", "base_url", "provider", "model"}
+    - {"mode": "none", "error": 中文}
+    优先级：image_gen.auth=chatgpt → image_gen.api_key → image_gen.follow_ai
+    （要求 ai_chat.auth 为空且有 api_key）→ 未配置错误。
+    """
+    ai_cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
+    image_cfg = image_cfg if isinstance(image_cfg, dict) else {}
+    auth = str(image_cfg.get("auth") or "").strip().lower()
+    if auth:
+        if auth == "chatgpt":
+            return {
+                "mode": "account",
+                "auth": "chatgpt",
+                "model": account_image_model(image_cfg),
+            }
+        return {"mode": "none", "error": ERROR_IMAGE_ACCOUNT}
+
+    image_key = str(image_cfg.get("api_key") or "").strip()
+    if image_key:
+        return {
+            "mode": "api",
+            "api_key": image_key,
+            "provider": str(image_cfg.get("provider") or "openai"),
+            "base_url": str(image_cfg.get("base_url") or "").strip()
+            or DEFAULT_IMAGE_BASE_URL,
+            "model": str(image_cfg.get("model") or "").strip()
+            or DEFAULT_IMAGE_MODEL,
+        }
+
+    if _truthy(image_cfg.get("follow_ai")):
+        ai_auth = str(ai_cfg.get("auth") or "").strip()
+        ai_key = str(ai_cfg.get("api_key") or "").strip()
+        if not ai_auth and ai_key:
+            return {
+                "mode": "api",
+                "api_key": ai_key,
+                "provider": str(image_cfg.get("provider") or ai_cfg.get("provider") or "openai"),
+                "base_url": str(image_cfg.get("base_url") or ai_cfg.get("base_url") or "").strip()
+                or DEFAULT_IMAGE_BASE_URL,
+                "model": str(image_cfg.get("model") or "").strip()
+                or DEFAULT_IMAGE_MODEL,
+            }
+
+    return {"mode": "none", "error": ERROR_IMAGE_CONFIG}
 
 
 # ---------------------------------------------------------------------------
@@ -529,56 +623,31 @@ def generate(
     return [_compress_image(image) for image in images]
 
 
-def generate_with_account(
-    auth: str,
+def _chatgpt_account_images(
+    record,
     prompt: str,
-    *,
-    size: str = "1024x1024",
-    timeout: float = 120.0,
-    record: dict | None = None,
+    size: str,
+    timeout: float,
+    model: str | None = None,
 ) -> list[bytes]:
-    """用 AI 账号额度画图（目前只支持 ChatGPT 账号）。
-
-    Args:
-        auth: 账号 id（image_gen/ai_chat 配置里的 ``auth`` 字段），如 ``"chatgpt"``。
-        prompt: 画面描述。
-        size: 图片尺寸，透传给账号模块。
-        timeout: 超时秒数。
-        record: 可选，已读取的账号记录（不给就按 auth 调 account_core.ensure_access）。
-
-    Returns:
-        图片原始字节列表（已尝试压缩）。
-
-    Raises:
-        ImageGenError: 账号不支持 / 未连接 / 登录过期 / 网络失败 / 无图片，
-            消息为中文短句，不含 token。
-    """
-    provider = str(auth or "").strip().lower()
-    if not provider:
-        raise ImageGenError("没有指定画图账号")
-    if provider != "chatgpt":
-        raise ImageGenError("账号画图目前只支持 ChatGPT 账号；其他账号请填图片 API Key")
-    prompt_text = str(prompt or "").strip()
-    if not prompt_text:
-        raise ImageGenError("prompt 为空")
-
+    """账号额度画图（ChatGPT）：ensure_access + accounts_chatgpt.generate_images。"""
     import account_core  # 延迟导入：imagegen 平时不依赖账号模块
 
     if record is None:
         try:
-            record = account_core.ensure_access(provider)
+            record = account_core.ensure_access("chatgpt")
         except account_core.AccountError as e:
             raise ImageGenError(e.message) from e
         except Exception:
             raise ImageGenError("读取 ChatGPT 账号失败，重新连接一次") from None
-
     try:
         import accounts_chatgpt
 
         images = accounts_chatgpt.generate_images(
             record,
-            prompt_text,
+            prompt,
             size=str(size or "").strip() or "1024x1024",
+            model=model,
             timeout=float(timeout or 120.0),
         )
     except account_core.AccountError as e:
@@ -592,6 +661,43 @@ def generate_with_account(
     return [_compress_image(image) for image in images]
 
 
+def generate_with_account(
+    auth: str,
+    prompt: str,
+    *,
+    size: str = "1024x1024",
+    timeout: float = 120.0,
+    record: dict | None = None,
+    model: str | None = None,
+) -> list[bytes]:
+    """用 AI 账号额度画图（目前只支持 ChatGPT 账号）。
+
+    Args:
+        auth: 账号 id，目前只支持 ``"chatgpt"``。
+        prompt: 画面描述。
+        size: 图片尺寸，透传给账号模块。
+        timeout: 超时秒数。
+        record: 可选，已读取的账号记录（不给就按 auth 调 account_core.ensure_access）。
+        model: 可选模型名（默认账号接口的 gpt-image-2）。
+
+    Returns:
+        图片原始字节列表（已尝试压缩）。
+
+    Raises:
+        ImageGenError: 账号不支持 / 未连接 / 登录过期 / 网络失败 / 无图片，
+            消息为中文短句，不含 token。
+    """
+    provider = str(auth or "").strip().lower()
+    if not provider:
+        raise ImageGenError("没有指定画图账号")
+    if provider != "chatgpt":
+        raise ImageGenError(ERROR_IMAGE_ACCOUNT)
+    prompt_text = str(prompt or "").strip()
+    if not prompt_text:
+        raise ImageGenError("prompt 为空")
+    return _chatgpt_account_images(record, prompt_text, size, timeout, model)
+
+
 def generate_for_ai(
     ai_cfg: dict,
     image_cfg: dict,
@@ -599,17 +705,13 @@ def generate_for_ai(
     size: str = "1024x1024",
     timeout: float = 120.0,
 ) -> list[bytes]:
-    """给 AI 工具（generate_image）用的画图入口：自动按配置分发。
+    """给 AI 工具（generate_image）用的画图入口：按画图配置分发（与主对话解耦）。
 
-    优先级：
-    1. ``image_cfg.api_key`` -> 现有 generate（provider/base_url/model 取 image_cfg 或 ai_cfg）；
-    2. ``ai_cfg.api_key`` 且 ``ai_cfg.auth`` 为空 -> 用 AI 的 Key 走 generate；
-    3. ``ai_cfg.auth == "chatgpt"`` -> 懒加载 accounts_chatgpt，ensure_access 后
-       调 generate_images（账号额度，size 透传）；
-    4. 其它账号 -> ImageGenError（只支持 ChatGPT 账号）。
-
-    Returns:
-        图片原始字节列表（已尝试压缩）。
+    优先级（见 :func:`resolve_image_mode`）：
+    - ``image_cfg.auth == "chatgpt"`` -> 账号额度画图（model 默认 gpt-image-2）；
+    - ``image_cfg.api_key`` -> 独立 API Key，base_url 空时用 OpenAI 官方；
+    - ``image_cfg.follow_ai`` 且主对话 auth 为空、有 api_key -> 复用 AI 的 Key；
+    - 否则抛 ImageGenError（中文），**不会**拿主对话的 base_url（如 DeepSeek）去拼图片接口。
 
     Raises:
         ImageGenError: 没有可用的画图配置、账号没连/过期、网络失败、无图片；
@@ -626,49 +728,19 @@ def generate_for_ai(
     except (TypeError, ValueError):
         seconds = 120.0
 
-    image_key = str(image_cfg.get("api_key") or "").strip()
-    ai_key = str(ai_cfg.get("api_key") or "").strip()
-    ai_auth = str(ai_cfg.get("auth") or "").strip()
-
-    if image_key or (ai_key and not ai_auth):
-        key = image_key or ai_key
+    decision = resolve_image_mode(ai_cfg, image_cfg)
+    mode = decision.get("mode")
+    if mode == "account":
+        model = str(decision.get("model") or "").strip() or ACCOUNT_IMAGE_MODEL
+        return _chatgpt_account_images(None, prompt_text, size_text, seconds, model)
+    if mode == "api":
         return generate(
-            provider=str(image_cfg.get("provider") or ai_cfg.get("provider") or "openai"),
-            base_url=str(image_cfg.get("base_url") or ai_cfg.get("base_url") or ""),
-            api_key=key,
-            model=str(image_cfg.get("model") or "gpt-image-1"),
+            provider=str(decision.get("provider") or "openai"),
+            base_url=str(decision.get("base_url") or DEFAULT_IMAGE_BASE_URL),
+            api_key=str(decision.get("api_key") or ""),
+            model=str(decision.get("model") or DEFAULT_IMAGE_MODEL),
             prompt=prompt_text,
             size=size_text,
             timeout=seconds,
         )
-
-    if ai_auth == "chatgpt":
-        try:
-            import account_core
-
-            record = account_core.ensure_access("chatgpt")
-        except account_core.AccountError as e:
-            raise ImageGenError(e.message) from e
-        except ImageGenError:
-            raise
-        except Exception:
-            raise ImageGenError("读取 ChatGPT 账号失败，重新连接一次") from None
-        try:
-            import accounts_chatgpt
-
-            images = accounts_chatgpt.generate_images(
-                record, prompt_text, size=size_text, timeout=seconds
-            )
-        except account_core.AccountError as e:
-            raise ImageGenError(e.message) from e
-        except ImageGenError:
-            raise
-        except Exception:
-            raise ImageGenError("ChatGPT 画图失败，稍后再试") from None
-        if not images:
-            raise ImageGenError("ChatGPT 没有返回图片")
-        return [_compress_image(image) for image in images]
-
-    if ai_auth:
-        raise ImageGenError("账号画图只支持 ChatGPT 账号；其他账号请填图片 API Key")
-    raise ImageGenError("没有配置画图方式：请填图片 API Key，或连接 ChatGPT 账号")
+    raise ImageGenError(str(decision.get("error") or ERROR_IMAGE_CONFIG))

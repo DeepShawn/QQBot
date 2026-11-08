@@ -2,8 +2,9 @@
 
 - provider: openai 兼容（OpenAI/DALL·E/gpt-image-1/中转站）或 gemini
 - 触发词可以是句中的任意位置；prompt 取触发词之后的文字（没有则去掉触发词后的全文）
-- 配置优先级：image_gen.api_key → AI 的 Key（ai_chat.api_key 且 auth 为空）
-  → 账号画图（ai_chat.auth，目前只支持 ChatGPT）→ 未配置提示
+- 画图配置与主对话解耦：image_gen.auth=chatgpt（画图专用账号）→ image_gen.api_key
+  → image_gen.follow_ai=true 时复用 AI 的 API Key（要求 ai_chat.auth 为空）
+  → 未配置中文提示；API Key 模式的 base_url 空时用 OpenAI 官方，绝不继承 AI 的 base_url
 - push_groups: 生成后额外推送到这些群
 """
 from __future__ import annotations
@@ -80,39 +81,55 @@ class Plugin(PluginBase):
             pass
         return {"type": "image", "data": {"file": "base64://" + base64.b64encode(payload).decode("ascii")}}
 
-    def _generate_sync(self, cfg: dict, ai_cfg: dict, prompt: str, api_key: str) -> list[bytes]:
+    def _generate_sync(
+        self, cfg: dict, prompt: str, api_key: str, base_url: str, provider: str, model: str
+    ) -> list[bytes]:
         return imagegen.generate(
-            provider=str(cfg.get("provider") or "openai"),
-            base_url=str(cfg.get("base_url") or ai_cfg.get("base_url") or ""),
+            provider=provider,
+            base_url=base_url,
             api_key=api_key,
-            model=str(cfg.get("model") or "gpt-image-1"),
+            model=model,
             prompt=prompt,
             size=str(cfg.get("size") or "1024x1024"),
             timeout=float(cfg.get("timeout_seconds", 120)),
         )
 
-    def _generate_account_sync(self, auth: str, cfg: dict, prompt: str) -> list[bytes]:
+    def _generate_account_sync(
+        self, auth: str, model: str, cfg: dict, prompt: str
+    ) -> list[bytes]:
         """账号额度画图（目前只有 ChatGPT）：忽略 provider/base_url。"""
         return imagegen.generate_with_account(
             auth,
             prompt,
             size=str(cfg.get("size") or "1024x1024"),
             timeout=float(cfg.get("timeout_seconds", 120)),
+            model=model,
         )
 
     @staticmethod
-    def _resolve_mode(cfg: dict, ai_cfg: dict) -> tuple[str, str]:
-        """返回 ("api", key) / ("account", auth) / ("none", "")。"""
-        image_key = str(cfg.get("api_key") or "").strip()
-        ai_auth = str(ai_cfg.get("auth") or "").strip()
-        ai_key = str(ai_cfg.get("api_key") or "").strip()
-        if image_key:
-            return "api", image_key
-        if ai_key and not ai_auth:
-            return "api", ai_key
-        if ai_auth:
-            return "account", ai_auth
-        return "none", ""
+    def _mode(cfg: dict, ai_cfg: dict) -> tuple:
+        """画图分发模式。
+
+        - ("account", auth)
+        - ("api", api_key, base_url, provider, model)
+        - ("none", 中文错误)
+        """
+        decision = imagegen.resolve_image_mode(ai_cfg, cfg)
+        mode = decision.get("mode")
+        if mode == "account":
+            return ("account", str(decision.get("auth") or "chatgpt"))
+        if mode == "api":
+            return (
+                "api",
+                str(decision.get("api_key") or ""),
+                str(decision.get("base_url") or imagegen.DEFAULT_IMAGE_BASE_URL),
+                str(decision.get("provider") or "openai"),
+                str(decision.get("model") or imagegen.DEFAULT_IMAGE_MODEL),
+            )
+        return ("none", str(decision.get("error") or imagegen.ERROR_IMAGE_CONFIG))
+
+    # 兼容旧名字
+    _resolve_mode = _mode
 
     async def _send_images(self, event, caption: str, segments: list[dict], cfg: dict):
         message = [text_seg(caption)] if caption else []
@@ -145,23 +162,22 @@ class Plugin(PluginBase):
 
         user_id = event.get("user_id")
         ai_cfg = self.ctx.plugin_cfg("ai_chat")
-        mode, value = self._resolve_mode(cfg, ai_cfg)
-        if mode == "none":
-            await self.ctx.reply(
-                event,
-                "[画图未配置] 先在控制台「画图」页填 API Key，或连接 ChatGPT 账号。",
-            )
+        mode = self._mode(cfg, ai_cfg)
+        if mode[0] == "none":
+            await self.ctx.reply(event, str(mode[1]))
             return True
 
-        self.ctx.log.info("文生图请求 %s mode=%s: %s", user_id, mode, prompt[:60])
+        self.ctx.log.info("文生图请求 %s mode=%s: %s", user_id, mode[0], prompt[:60])
         try:
-            if mode == "account":
+            if mode[0] == "account":
+                account_model = imagegen.account_image_model(cfg)
                 images = await asyncio.to_thread(
-                    self._generate_account_sync, value, cfg, prompt
+                    self._generate_account_sync, mode[1], account_model, cfg, prompt
                 )
             else:
+                _kind, api_key, base_url, provider, model = mode
                 images = await asyncio.to_thread(
-                    self._generate_sync, cfg, ai_cfg, prompt, value
+                    self._generate_sync, cfg, prompt, api_key, base_url, provider, model
                 )
         except imagegen.ImageGenError as e:
             self.ctx.log.warning("文生图失败: %s", e)

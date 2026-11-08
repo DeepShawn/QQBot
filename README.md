@@ -220,9 +220,10 @@ tail -f protocol/logs/*.log       # NapCat / QQ
 
 ### 6) 画图 / 识图（支持账号）
 
-- **画图**：默认由 AI 自己判断（你说「画个猫 / 来一张……」），模型调用 `generate_image` 工具：
-  优先用图片 API Key，其次 AI 的 Key，最后 **ChatGPT 账号**（gpt-image-2）。不靠关键词，也不会用代码画。
-  显式触发词（画一张 / 画个 / 生成图片…）仍然生效（句中包含即可），同样支持 ChatGPT 账号。
+- **画图**：默认由 AI 自己判断（你说「画个猫 / 来一张……」），模型调用 `generate_image` 工具。
+  画图账号与主对话账号**相互独立**：主对话可以用 Claude，画图单独选「ChatGPT 账号」（`image_gen.auth=chatgpt`，模型 gpt-image-2），
+  或者单独填图片 API Key（base_url 留空 = OpenAI 官方）。显式触发词（画一张 / 画个 / 生成图片…）仍然生效。
+  ⚠️ 旧行为「复用主对话的 Key/接口」默认关闭（`follow_ai=false`）；不会再拿 DeepSeek 的地址去拼图片接口（之前 404 的原因）。
 - **识图**：有视觉 API Key 用 Key；没 Key 但连了 ChatGPT / Claude / Gemini 账号时，用账号的多模态能力识别图片。
 - 账号模式下每轮会先做一次轻量「判断要不要用工具」的路由调用；OpenAI 兼容 API Key 模式用原生 function calling。
 
@@ -578,6 +579,7 @@ curl -s http://127.0.0.1:8080/api/update/bot/status   # 看进度
 更多页 →「工具」：
 
 - **关键词管理**：管理关键词回复规则（名称、触发词、匹配方式、生效范围、回复内容，增删改）；联网搜索触发词；画图触发词。
+- **画图页**：「画图账号」下拉（不使用=图片 API Key / ChatGPT 账号）+「模型」下拉（账号模式 gpt-image-2；API 模式 gpt-image-1 / dall-e-3 / dall-e-2）。
 - **插件管理**：关键词回复 / 群管理 / AI 聊天 / 画图 / 联网搜索 / Python 运行 / 技能 的开关；
   Python 运行里可以设超时和「让 AI 自己决定何时运行」；开发者工具里可设 shell 超时、仓库路径、GitHub Token。
 - **任务（终端）**：输入命令跑后台任务，看输出/停止；**技能**：新建/编辑/删除 Markdown 技能。

@@ -131,6 +131,10 @@ DEFAULTS = {
             "provider": "openai",
             "base_url": "",
             "api_key": "",
+            # 画图认证方式："" = 用图片 API Key；"chatgpt" = 用画图专用 ChatGPT 账号
+            "auth": "",
+            # 是否复用主对话的 API Key/接口（默认 false，避免拿对话的 base_url 去画图）
+            "follow_ai": False,
             "model": "gpt-image-1",
             "size": "1024x1024",
             "triggers": ["画一张", "画个", "画只", "画一幅", "生成图片", "生图", "img:"],

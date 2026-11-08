@@ -299,7 +299,7 @@ class IntentRoutingTests(RoutingTestCase):
         self.ctx = _make_ctx(
             self.root,
             ai_cfg=_ai_cfg(auth="chatgpt", api_key="", **overrides),
-            image_cfg=_image_cfg(api_key=""),
+            image_cfg=_image_cfg(api_key="", auth="chatgpt"),
             python_cfg=_python_cfg(enabled=False),
         )
 

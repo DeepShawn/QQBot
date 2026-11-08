@@ -628,14 +628,15 @@ class Plugin(PluginBase):
             return {}
 
     def _image_tool_configured(self, cfg: dict) -> bool:
-        """image_gen 配置上是否能拿到图片 Key 或 ChatGPT 账号（不看权限）。"""
+        """image_gen 配置上是否能画图（画图配置与主对话 auth 解耦）。"""
         image_cfg = self._image_gen_cfg()
         if image_cfg.get("enabled") is False:
             return False
-        ai_auth = str(cfg.get("auth") or "").strip()
-        image_key = str(image_cfg.get("api_key") or "").strip()
-        ai_key = str(cfg.get("api_key") or "").strip()
-        return bool(image_key or (ai_key and not ai_auth) or ai_auth == "chatgpt")
+        try:
+            decision = imagegen.resolve_image_mode(cfg, image_cfg)
+        except Exception:
+            return False
+        return decision.get("mode") in ("account", "api")
 
     async def _image_tool_available(self, event, cfg: dict) -> bool:
         """图片工具可用性：配置 ok + 权限 ok。"""

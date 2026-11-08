@@ -489,17 +489,25 @@ class ImageGenPluginTests(unittest.IsolatedAsyncioTestCase):
         await self.run_event(_event("画一张猫"))
         self.assertEqual(len(self.generate_calls), 1)
         self.assertEqual(self.generate_calls[0]["api_key"], "img-key")
+        # base_url 为空时用 OpenAI 官方，不继承 AI 的 base_url
+        self.assertEqual(
+            self.generate_calls[0]["base_url"], imagegen.DEFAULT_IMAGE_BASE_URL
+        )
         self.assertEqual(self.account_calls, [])
 
-    async def test_reuses_ai_key_when_auth_empty(self):
-        self.ctx._cfg = _make_cfg(ai_cfg={"auth": "", "api_key": "ai-key"})
+    async def test_reuses_ai_key_when_follow_ai(self):
+        self.ctx._cfg = _make_cfg(
+            image_gen_cfg={"follow_ai": True},
+            ai_cfg={"auth": "", "api_key": "ai-key"},
+        )
         self.install_api()
         await self.run_event(_event("画一张猫"))
         self.assertEqual(self.generate_calls[0]["api_key"], "ai-key")
 
     async def test_account_mode_uses_chatgpt(self):
         self.ctx._cfg = _make_cfg(
-            ai_cfg={"auth": "chatgpt", "api_key": ""}
+            image_gen_cfg={"auth": "chatgpt"},
+            ai_cfg={"auth": "claude", "api_key": ""},
         )
         self.install_account()
         self.install_api()
@@ -516,19 +524,22 @@ class ImageGenPluginTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any(seg.get("type") == "image" for seg in message))
 
     async def test_other_account_replies_hint(self):
-        self.ctx._cfg = _make_cfg(ai_cfg={"auth": "claude", "api_key": ""})
-        self.install_account(
-            error=imagegen.ImageGenError(
-                "账号画图目前只支持 ChatGPT 账号；其他账号请填图片 API Key"
-            )
+        self.ctx._cfg = _make_cfg(
+            image_gen_cfg={"auth": "claude"},
+            ai_cfg={"auth": "claude", "api_key": ""},
         )
+        self.install_account()
         handled = await self.run_event(_event("画一张猫"))
         self.assertTrue(handled)
         self.assertIn("只支持 ChatGPT", self.ctx.replies[-1])
         self.assertEqual(self.ctx.sent, [])
+        self.assertEqual(self.account_calls, [])
 
     async def test_account_error_replies_chinese(self):
-        self.ctx._cfg = _make_cfg(ai_cfg={"auth": "chatgpt", "api_key": ""})
+        self.ctx._cfg = _make_cfg(
+            image_gen_cfg={"auth": "chatgpt"},
+            ai_cfg={"auth": "chatgpt", "api_key": ""},
+        )
         self.install_account(
             error=imagegen.ImageGenError("登录已过期，重新连接一次")
         )
@@ -542,8 +553,9 @@ class ImageGenPluginTests(unittest.IsolatedAsyncioTestCase):
         handled = await self.run_event(_event("画一张猫"))
         self.assertTrue(handled)
         reply = self.ctx.replies[-1]
-        self.assertIn("画图未配置", reply)
+        self.assertIn("画图需要", reply)
         self.assertIn("ChatGPT 账号", reply)
+        self.assertIn("图片 API Key", reply)
         self.assertEqual(self.generate_calls, [])
         self.assertEqual(self.account_calls, [])
 

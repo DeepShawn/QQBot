@@ -68,7 +68,7 @@ class ImageGenForAiTests(unittest.TestCase):
         self.assertEqual(captured["size"], "512x512")
         self.assertEqual(captured["timeout"], 30.0)
 
-    def test_ai_key_used_when_auth_empty(self):
+    def test_follow_ai_reuses_ai_key(self):
         captured: dict = {}
         _patch(
             self,
@@ -78,7 +78,7 @@ class ImageGenForAiTests(unittest.TestCase):
         )
         imagegen.generate_for_ai(
             {"auth": "", "api_key": "ai-key", "base_url": "https://ai"},
-            {"api_key": ""},
+            {"api_key": "", "follow_ai": True},
             "猫",
         )
         self.assertEqual(captured["api_key"], "ai-key")
@@ -88,7 +88,9 @@ class ImageGenForAiTests(unittest.TestCase):
         captured: dict = {}
 
         def fake_generate(record, prompt, size="1024x1024", model=None, timeout=120):
-            captured.update(record=record, prompt=prompt, size=size, timeout=timeout)
+            captured.update(
+                record=record, prompt=prompt, size=size, model=model, timeout=timeout
+            )
             return [TINY_PNG]
 
         _patch(self, imagegen, "generate", lambda **kwargs: self.fail("不应走 API Key"))
@@ -100,20 +102,39 @@ class ImageGenForAiTests(unittest.TestCase):
         )
         _patch(self, _chatgpt_module(self), "generate_images", fake_generate)
         images = imagegen.generate_for_ai(
-            {"auth": "chatgpt", "api_key": ""},
-            {"api_key": ""},
+            {"auth": "claude", "api_key": ""},
+            {"auth": "chatgpt", "api_key": "", "model": "gpt-image-3"},
             "一只狗",
             size="1024x1792",
         )
         self.assertEqual(images, [TINY_PNG])
         self.assertEqual(captured["prompt"], "一只狗")
         self.assertEqual(captured["size"], "1024x1792")
+        self.assertEqual(captured["model"], "gpt-image-3")
+
+    def test_chatgpt_account_default_model(self):
+        captured: dict = {}
+
+        def fake_generate(record, prompt, size="1024x1024", model=None, timeout=120):
+            captured["model"] = model
+            return [TINY_PNG]
+
+        _patch(self, imagegen, "generate", lambda **kwargs: self.fail("不应走 API Key"))
+        _patch(
+            self,
+            account_core,
+            "ensure_access",
+            lambda provider: {"access": "a", "extra": {"chatgpt_account_id": "id"}},
+        )
+        _patch(self, _chatgpt_module(self), "generate_images", fake_generate)
+        imagegen.generate_for_ai(
+            {"auth": ""}, {"auth": "chatgpt", "model": "dall-e-3"}, "猫"
+        )
+        self.assertEqual(captured["model"], imagegen.ACCOUNT_IMAGE_MODEL)
 
     def test_other_account_rejected(self):
         with self.assertRaises(imagegen.ImageGenError) as ctx:
-            imagegen.generate_for_ai(
-                {"auth": "claude", "api_key": ""}, {"api_key": ""}, "猫"
-            )
+            imagegen.generate_for_ai({"auth": "claude"}, {"auth": "claude"}, "猫")
         self.assertIn("只支持 ChatGPT", str(ctx.exception))
 
     def test_nothing_configured(self):
@@ -131,7 +152,7 @@ class ImageGenForAiTests(unittest.TestCase):
 
         _patch(self, account_core, "ensure_access", fake_ensure)
         with self.assertRaises(imagegen.ImageGenError) as ctx:
-            imagegen.generate_for_ai({"auth": "chatgpt", "api_key": ""}, {}, "猫")
+            imagegen.generate_for_ai({"auth": "chatgpt"}, {"auth": "chatgpt"}, "猫")
         self.assertEqual(str(ctx.exception), account_core.ERRORS["network"])
 
     def test_generate_error_propagates(self):
@@ -140,7 +161,7 @@ class ImageGenForAiTests(unittest.TestCase):
 
         _patch(self, imagegen, "generate", fake_generate)
         with self.assertRaises(imagegen.ImageGenError) as ctx:
-            imagegen.generate_for_ai({"api_key": "k"}, {}, "猫")
+            imagegen.generate_for_ai({}, {"api_key": "k"}, "猫")
         self.assertEqual(str(ctx.exception), "画图接口 500")
 
 
