@@ -1,5 +1,7 @@
 # QQ 机器人 · 跑在 Android 手机里
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 一个**完全跑在安卓手机里**的 QQ 机器人：Linux QQ + NapCat 提供协议层，Python 机器人提供功能，
 管理台既是网页也能打包成独立的安卓 App（服务内置在 App 里，不依赖 Termux / 电脑 / 服务器）。
 
@@ -433,3 +435,7 @@ QQ 在 proot 里会持续刷 GPU/dbus 错误，日志可能暴涨（出现过 41
 - 自建 QQ 机器人属于**第三方协议**，腾讯官方不支持，**有被风控/封号的风险**，务必用不常用的小号。
 - 机器人账号不要频繁加群、发广告、改设备，容易触发风控。
 - 手机跑协议层耗电、发热比平时高，在意的话可以把 `protocol` 换成电脑/服务器部署，机器人本体的配置完全通用。
+
+## 许可证
+
+[MIT](LICENSE) © 2026 DeepShawn
