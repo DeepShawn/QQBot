@@ -19,8 +19,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -35,6 +40,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -273,27 +279,8 @@ private fun MainScreen() {
 
     Scaffold(
         containerColor = Color.Transparent,
-        topBar = {
-            TopAppBar(
-                title = TABS[tab].title,
-                color = Color.Transparent,
-                titleColor = GlassText.primary,
-                largeTitleColor = GlassText.primary,
-                scrollBehavior = scrollBehavior,
-                modifier = Modifier.drawBehind {
-                    // 展开时完全透明；向上滚动时随折叠程度渐显 Thick 玻璃与 0.5dp 分隔线
-                    val f = scrollBehavior.state.collapsedFraction
-                    if (f > 0.01f) {
-                        drawRect(GlassTokens.thickFill.copy(alpha = GlassTokens.thickFill.alpha * f))
-                        drawRect(
-                            color = GlassText.divider,
-                            topLeft = Offset(0f, size.height - 0.5.dp.toPx()),
-                            size = Size(size.width, 0.5.dp.toPx()),
-                        )
-                    }
-                },
-            )
-        },
+        // 顶栏已删除：状态栏留白由内容区 statusBarsPadding 处理，Scaffold 不再重复给 inset
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         bottomBar = {
             GlassTabBar(
                 items = TABS.map { GlassTabItem(it.label, it.icon) },
@@ -303,10 +290,17 @@ private fun MainScreen() {
             )
         },
     ) { padding ->
+        // 浮动 Tab 栏会盖住滚动内容：除 Scaffold 给的底栏高度外再多留 16dp，滚到底最后一张卡完整可见
+        val pagePadding = PaddingValues(
+            start = padding.calculateStartPadding(LocalLayoutDirection.current),
+            top = padding.calculateTopPadding(),
+            end = padding.calculateEndPadding(LocalLayoutDirection.current),
+            bottom = padding.calculateBottomPadding() + 16.dp,
+        )
         Box(Modifier.fillMaxSize()) {
             if (!Store.online && Store.state == null) {
                 Column(
-                    Modifier.fillMaxSize().padding(padding),
+                    Modifier.fillMaxSize().statusBarsPadding().padding(pagePadding),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -315,12 +309,22 @@ private fun MainScreen() {
                     Text("连接管理服务…", color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                 }
             } else {
-                when (tab) {
-                    0 -> HomePage(padding, scrollBehavior)
-                    1 -> AiPage(padding, scrollBehavior)
-                    2 -> GroupPage(padding, scrollBehavior)
-                    3 -> RecordsPage(padding, scrollBehavior)
-                    else -> MorePage(padding, scrollBehavior)
+                Column(Modifier.fillMaxSize().statusBarsPadding()) {
+                    // 页面自己的大标题（原来在黑色顶栏里，现在直接画在背景光斑上）
+                    Text(
+                        TABS[tab].title,
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = GlassText.primary,
+                        modifier = Modifier.padding(start = 28.dp, top = 8.dp, bottom = 6.dp),
+                    )
+                    when (tab) {
+                        0 -> HomePage(pagePadding, scrollBehavior)
+                        1 -> AiPage(pagePadding, scrollBehavior)
+                        2 -> GroupPage(pagePadding, scrollBehavior)
+                        3 -> RecordsPage(pagePadding, scrollBehavior)
+                        else -> MorePage(pagePadding, scrollBehavior)
+                    }
                 }
             }
             UpdatePromptHost()
