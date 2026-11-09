@@ -168,12 +168,15 @@ fun PythonRunnerDialog(onDismiss: () -> Unit) {
                     Spacer(Modifier.height(10.dp))
                     Text("标准输出", fontSize = 13.sp, fontWeight = FontWeight.Medium)
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        stdout.takeLast(12000),
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                    )
+                    InkBox(Modifier.fillMaxWidth()) {
+                        Text(
+                            stdout.takeLast(12000),
+                            modifier = Modifier.padding(12.dp),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = GlassText.mono,
+                        )
+                    }
                 } else if (!timedOut) {
                     Spacer(Modifier.height(6.dp))
                     Text(
@@ -186,12 +189,15 @@ fun PythonRunnerDialog(onDismiss: () -> Unit) {
                     Spacer(Modifier.height(10.dp))
                     Text("错误输出", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Bad)
                     Spacer(Modifier.height(4.dp))
-                    Text(
-                        stderr.takeLast(8000),
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = Bad,
-                    )
+                    InkBox(Modifier.fillMaxWidth()) {
+                        Text(
+                            stderr.takeLast(8000),
+                            modifier = Modifier.padding(12.dp),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = Bad,
+                        )
+                    }
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

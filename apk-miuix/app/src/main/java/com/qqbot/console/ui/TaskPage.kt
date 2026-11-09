@@ -331,22 +331,28 @@ private fun TaskDetailDialog(
             Spacer(Modifier.height(12.dp))
             Text("输出", fontSize = 13.sp, fontWeight = FontWeight.Medium)
             Spacer(Modifier.height(4.dp))
-            Text(
-                stdout.ifBlank { "（还没有输出）" }.takeLast(20000),
-                fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
+            InkBox(Modifier.fillMaxWidth()) {
+                Text(
+                    stdout.ifBlank { "（还没有输出）" }.takeLast(20000),
+                    modifier = Modifier.padding(12.dp),
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = GlassText.mono,
+                )
+            }
             if (stderr.isNotBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Text("错误输出", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Bad)
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    stderr.takeLast(8000),
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = Bad,
-                )
+                InkBox(Modifier.fillMaxWidth()) {
+                    Text(
+                        stderr.takeLast(8000),
+                        modifier = Modifier.padding(12.dp),
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = Bad,
+                    )
+                }
             }
 
             Spacer(Modifier.height(14.dp))
@@ -549,12 +555,15 @@ private fun SkillViewDialog(
         Column(
             Modifier.fillMaxWidth().heightIn(max = 580.dp).verticalScroll(rememberScrollState()),
         ) {
-            Text(
-                content.ifBlank { "（这个技能还没有内容）" }.take(40000),
-                fontSize = 12.sp,
-                fontFamily = FontFamily.Monospace,
-                color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-            )
+            InkBox(Modifier.fillMaxWidth()) {
+                Text(
+                    content.ifBlank { "（这个技能还没有内容）" }.take(40000),
+                    modifier = Modifier.padding(12.dp),
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = GlassText.mono,
+                )
+            }
             Spacer(Modifier.height(14.dp))
             if (confirmDelete) {
                 Text("确定删除技能「$name」？", fontSize = 14.sp, color = Bad)

@@ -278,12 +278,13 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 },
             )
             logs?.let { text ->
-                Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                InkBox(Modifier.fillMaxWidth().padding(16.dp)) {
                     Text(
                         text.takeLast(6000),
+                        modifier = Modifier.padding(12.dp),
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                        color = GlassText.mono,
                     )
                 }
             }

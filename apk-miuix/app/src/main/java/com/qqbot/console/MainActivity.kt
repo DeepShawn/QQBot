@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.runtime.Composable
@@ -29,13 +30,24 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qqbot.console.ui.AiPage
+import com.qqbot.console.ui.GlassBackdrop
+import com.qqbot.console.ui.GlassCard
+import com.qqbot.console.ui.GlassTabBar
+import com.qqbot.console.ui.GlassTabItem
+import com.qqbot.console.ui.GlassText
+import com.qqbot.console.ui.GlassTokens
 import com.qqbot.console.ui.GroupPage
+import com.qqbot.console.ui.glass
 import com.qqbot.console.ui.HomePage
 import com.qqbot.console.ui.MorePage
 import com.qqbot.console.ui.RecordsPage
@@ -46,8 +58,6 @@ import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
-import top.yukonga.miuix.kmp.basic.NavigationBar
-import top.yukonga.miuix.kmp.basic.NavigationBarItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
@@ -61,6 +71,7 @@ import top.yukonga.miuix.kmp.icon.extended.More
 import top.yukonga.miuix.kmp.theme.ColorSchemeMode
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.theme.ThemeController
+import top.yukonga.miuix.kmp.squircle.LocalSquircleEnabled
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,10 +79,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContent {
-            val controller = remember { ThemeController(ColorSchemeMode.System) }
-            // MIUIX 的弹窗 / 下拉用 navigationevent 处理返回手势，必须能拿到 dispatcher，否则一弹就闪退
+            // 液态玻璃：全局深色优先，强调色用冰川蓝
+            val controller = remember {
+                ThemeController(ColorSchemeMode.Dark, keyColor = Color(0xFF5B8CFF))
+            }
+            // MIUIX 的弹窗 / 下拉用 navigationevent 处理返回手势，必须能拿到 dispatcher，否则一弹就闪退；
+            // 关掉 squircle，避免 MIUIX 的圆角与玻璃渐变描边在角部错位
             androidx.compose.runtime.CompositionLocalProvider(
                 androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner provides this@MainActivity,
+                LocalSquircleEnabled provides false,
             ) {
                 MiuixTheme(controller = controller) { Root() }
             }
@@ -83,9 +99,12 @@ class MainActivity : ComponentActivity() {
 private fun Root() {
     val ctx = LocalContext.current
     LaunchedEffect(Unit) { Installer.boot(ctx) }
-    when (Installer.phase) {
-        Phase.READY -> MainScreen()
-        else -> SetupScreen()
+    Box(Modifier.fillMaxSize()) {
+        GlassBackdrop()
+        when (Installer.phase) {
+            Phase.READY -> MainScreen()
+            else -> SetupScreen()
+        }
     }
 }
 
@@ -104,13 +123,23 @@ private fun SetupScreen() {
         if (uri != null) Installer.installFromUri(ctx, uri)
     }
 
-    Scaffold(topBar = { TopAppBar(title = "机器人控制台") }) { padding ->
+    Scaffold(
+        containerColor = Color.Transparent,
+        topBar = {
+            TopAppBar(
+                title = "机器人控制台",
+                color = Color.Transparent,
+                titleColor = GlassText.primary,
+                largeTitleColor = GlassText.primary,
+            )
+        },
+    ) { padding ->
         Column(
             Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Card(Modifier.fillMaxWidth()) {
+            GlassCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     when (Installer.phase) {
                         Phase.CHECKING -> {
@@ -243,13 +272,35 @@ private fun MainScreen() {
     LaunchedEffect(Unit) { AppUpdates.autoCheckIfDue(ctx) }
 
     Scaffold(
-        topBar = { TopAppBar(title = TABS[tab].title, scrollBehavior = scrollBehavior) },
+        containerColor = Color.Transparent,
+        topBar = {
+            TopAppBar(
+                title = TABS[tab].title,
+                color = Color.Transparent,
+                titleColor = GlassText.primary,
+                largeTitleColor = GlassText.primary,
+                scrollBehavior = scrollBehavior,
+                modifier = Modifier.drawBehind {
+                    // 展开时完全透明；向上滚动时随折叠程度渐显 Thick 玻璃与 0.5dp 分隔线
+                    val f = scrollBehavior.state.collapsedFraction
+                    if (f > 0.01f) {
+                        drawRect(GlassTokens.thickFill.copy(alpha = GlassTokens.thickFill.alpha * f))
+                        drawRect(
+                            color = GlassText.divider,
+                            topLeft = Offset(0f, size.height - 0.5.dp.toPx()),
+                            size = Size(size.width, 0.5.dp.toPx()),
+                        )
+                    }
+                },
+            )
+        },
         bottomBar = {
-            NavigationBar {
-                TABS.forEachIndexed { i, t ->
-                    NavigationBarItem(selected = tab == i, onClick = { tab = i }, icon = t.icon, label = t.label)
-                }
-            }
+            GlassTabBar(
+                items = TABS.map { GlassTabItem(it.label, it.icon) },
+                selectedIndex = tab,
+                onSelect = { tab = it },
+                modifier = Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
+            )
         },
     ) { padding ->
         Box(Modifier.fillMaxSize()) {
@@ -285,8 +336,24 @@ private fun Toast(modifier: Modifier) {
         delay(2200)
         if (Store.toast == msg) Store.toast = null
     }
-    Card(modifier = modifier.padding(horizontal = 24.dp)) {
-        Text(msg, modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), fontSize = 14.sp)
+    Box(
+        modifier.padding(horizontal = 24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .glass(
+                    level = com.qqbot.console.ui.GlassLevel.Thick,
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(22.dp),
+                ),
+        ) {
+            Text(
+                msg,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                fontSize = 14.sp,
+                color = GlassText.primary,
+            )
+        }
     }
 }
 
