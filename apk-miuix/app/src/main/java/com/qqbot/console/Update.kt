@@ -54,6 +54,13 @@ object AppUpdates {
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
+    /** 校验文件专用：短超时（10s/20s），拿不到就跳过校验，不能拖死整个更新。 */
+    private val sumsClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
+
     // ---------- 界面状态（Compose 直接读） ----------
     var checking by mutableStateOf(false); private set
     var downloading by mutableStateOf(false); private set
@@ -196,7 +203,7 @@ object AppUpdates {
             }
         }
         if (apkUrl.isBlank()) return ApiAttempt(null, "检查更新失败：这个版本没有安装包", false)
-        if (sumsUrl.isBlank()) return ApiAttempt(null, "检查更新失败：这个版本没有校验文件", false)
+        // 校验文件是可选的：没有也允许更新，下载时跳过校验即可
         return ApiAttempt(
             release = AppRelease(
                 version = version,
@@ -279,27 +286,66 @@ object AppUpdates {
                         f.delete()
                     }
                 }
-                statusText = "正在读取校验文件…"
-                val sums = downloadText(info.sumsUrl)
-                val expected = parseSums(sums, info.apkName)
-                    ?: throw IllegalStateException("校验文件里没有这个安装包，已取消更新")
 
-                statusText = "正在下载…"
-                downloadFile(info.apkUrl, tmp) { done, total ->
-                    progress = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
-                    statusText = if (total > 0) {
-                        "正在下载… ${done / 1048576} / ${total / 1048576} MB"
-                    } else {
-                        "正在下载… ${done / 1048576} MB"
+                // 1) 校验文件可选：短超时；失败 / 为空 / 404 就跳过校验继续下载 APK
+                statusText = "正在读取校验文件…"
+                val expected: String? = if (info.sumsUrl.isBlank()) {
+                    null
+                } else {
+                    val sums = fetchSumsOptional(info.sumsUrl)
+                    sums?.let { parseSums(it, info.apkName) }
+                }
+                if (expected == null) {
+                    statusText = "校验文件获取失败，跳过校验继续下载…"
+                }
+
+                // 2) 下载 APK：主地址失败时，用手动拼接的 release 资产地址再试一次
+                statusText = if (expected == null) "跳过校验，正在下载安装包…" else "正在下载… 0%"
+                val urls = LinkedHashSet<String>()
+                if (info.apkUrl.isNotBlank()) urls += info.apkUrl
+                val manualUrl = "https://github.com/$REPO/releases/download/${info.tag}/QQBot-Console-${info.version}.apk"
+                if (manualUrl != info.apkUrl) urls += manualUrl
+
+                var lastError: Exception? = null
+                var downloaded = false
+                for (url in urls) {
+                    try {
+                        tmp.delete()
+                        downloadFile(url, tmp) { done, total ->
+                            progress = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else 0f
+                            val pct = if (total > 0) " ${(progress * 100).toInt()}%" else ""
+                            statusText = if (total > 0) {
+                                "正在下载…$pct ${done / 1048576} / ${total / 1048576} MB"
+                            } else {
+                                "正在下载… ${done / 1048576} MB"
+                            }
+                        }
+                        downloaded = true
+                        break
+                    } catch (e: Exception) {
+                        lastError = e
+                    }
+                }
+                if (!downloaded) {
+                    val err = lastError
+                    val detail = when (err) {
+                        is IllegalStateException -> err.message ?: "网络错误"
+                        is Exception -> friendly(err)
+                        else -> "网络错误"
+                    }
+                    throw IllegalStateException("下载失败：$detail")
+                }
+
+                // 3) 只有拿到校验值才校验；校验失败才中止
+                if (expected != null) {
+                    statusText = "正在校验安装包…"
+                    val actual = sha256(tmp)
+                    if (!actual.equals(expected, ignoreCase = true)) {
+                        tmp.delete()
+                        throw IllegalStateException("安装包校验失败，请稍后再试")
                     }
                 }
 
-                statusText = "正在校验安装包…"
-                val actual = sha256(tmp)
-                if (!actual.equals(expected, ignoreCase = true)) {
-                    tmp.delete()
-                    throw IllegalStateException("安装包校验失败，请稍后再试")
-                }
                 if (target.exists()) target.delete()
                 if (!tmp.renameTo(target)) {
                     tmp.copyTo(target, overwrite = true)
@@ -312,17 +358,33 @@ object AppUpdates {
                 Store.toast = "安装包已下载，请在系统安装界面完成更新"
             } catch (e: Exception) {
                 downloading = false
-                error = if (e is IllegalStateException) (e.message ?: "更新失败") else "更新失败：${friendly(e)}"
+                error = if (e is IllegalStateException) {
+                    e.message ?: "更新失败，请稍后再试"
+                } else {
+                    "下载失败：${friendly(e)}"
+                }
+                statusText = error
+                Store.toast = error
             }
         }
     }
 
-    private fun downloadText(url: String): String {
-        val req = Request.Builder().url(url).header("User-Agent", UA).get().build()
-        return client.newCall(req).execute().use { r ->
-            if (!r.isSuccessful) throw IllegalStateException("下载校验文件失败：HTTP ${r.code}")
-            r.body?.string() ?: throw IllegalStateException("校验文件是空的")
+    /** 可选校验文件：短超时（10s/20s）最多试 2 次；失败 / 空 / 404 返回 null（跳过校验）。 */
+    private fun fetchSumsOptional(url: String): String? {
+        repeat(2) {
+            try {
+                val req = Request.Builder().url(url).header("User-Agent", UA).get().build()
+                sumsClient.newCall(req).execute().use { r ->
+                    if (r.isSuccessful) {
+                        val text = r.body?.string().orEmpty()
+                        if (text.isNotBlank()) return text
+                    }
+                }
+            } catch (_: Exception) {
+                // 网络慢/被墙/404：再试一次或直接跳过
+            }
         }
+        return null
     }
 
     private fun downloadFile(url: String, dest: File, onProgress: (Long, Long) -> Unit) {

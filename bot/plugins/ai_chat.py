@@ -46,8 +46,8 @@ LOCAL_PYTHON_NO_TOOL_HINT = (
 
 # 画图能力提示（追加到 system prompt）
 LOCAL_IMAGE_TOOL_HINT = (
-    "【画图工具】用户要画图/生成图片/来一张图时，自己调用 generate_image 工具；"
-    "不要把画图推回给用户，也不要写代码或用 SVG 画图。"
+    "【画图工具】用户要画图/生成图片/来一张图时，必须调用 generate_image 工具；"
+    "禁止用 ASCII、emoji、SVG 或代码块冒充图片，也不要把画图推回给用户。"
 )
 
 IMAGE_TOOL_NAME = "generate_image"
@@ -57,8 +57,8 @@ IMAGE_TOOL_SPEC = {
     "function": {
         "name": IMAGE_TOOL_NAME,
         "description": (
-            "用户要画图/生成图片/来一张图时调用；不要用代码画图（也不要写 SVG 画图代码），"
-            "直接生成图片发出去。prompt 必须由你自己根据用户需求写一段高质量生图提示词"
+            "用户要画图/生成图片/来一张图时调用；禁止用 ASCII、emoji、SVG 或代码块冒充图片，"
+            "必须直接生成图片发出去。prompt 必须由你自己根据用户需求写一段高质量生图提示词"
             "（主体、风格、构图、光线、画幅等），不要只复述用户原话。"
         ),
         "parameters": {
@@ -151,6 +151,17 @@ MAX_TOOL_ROUNDS = 3
 ROUTE_MAX_HISTORY = 6
 ROUTE_MAX_TOKENS = 300
 
+# 确定性的生图意图兜底（模型路由不可靠时直接走画图流程）
+IMAGE_INTENT_RE = re.compile(
+    r"(画张|画一张|来一张|来张|生成一张|生成图|生成图片|绘制|壁纸|"
+    r"使用画图|用画图|画图功能|帮我画|画个|画只|画一幅|画一下)"
+)
+IMAGE_PROMPT_FROM_HISTORY_SYSTEM = (
+    "你是生图提示词作者。请结合对话上下文，把用户这次的画图需求写成一句具体的中文生图提示词，"
+    "包含主体、风格、构图、光线、画幅等细节；只输出提示词本身，"
+    "不要解释、不要加引号或代码块、不要照抄用户原话。"
+)
+
 IMAGE_PROMPT_REWRITE_SYSTEM = (
     "你是生图提示词改写助手。根据用户需求写一句具体的中文生图提示词，"
     "包含主体、风格、构图、光线、画幅等细节；只输出提示词本身，"
@@ -161,6 +172,8 @@ IMAGE_PROMPT_FALLBACK_REPLY = "画好了，图在下面～"
 ROUTE_SYSTEM_HEAD = (
     "你是工具路由器。先分析用户需求，再从可用工具里选择 0 或 1 个；"
     "不要回答用户问题，不要解释。\n"
+    "如果用户要画图/生成图片/来一张图/壁纸，必须选择 generate_image；"
+    "禁止用 ASCII、emoji、SVG 或代码块冒充图片。\n"
     "如果选择 generate_image，prompt 字段必须是你自己根据需求写好的具体生图提示词"
     "（包含主体、风格、构图、光线、画幅等），不要照抄用户原话。\n"
     "可用工具：\n"
@@ -960,6 +973,99 @@ class Plugin(PluginBase):
             return ""
         return text[:400]
 
+    @staticmethod
+    def _looks_like_image_request(text) -> bool:
+        """确定性判断：用户这句话是不是在要图片（画张/来一张/壁纸/使用画图功能等）。"""
+        raw = str(text or "").strip()
+        if not raw:
+            return False
+        return bool(IMAGE_INTENT_RE.search(raw))
+
+    async def _write_image_prompt_from_history(
+        self, cfg: dict, history: list, user_text: str
+    ) -> str:
+        """结合最近对话历史，让主模型写出生图提示词；失败返回空串。"""
+        messages: list[dict] = [
+            {"role": "system", "content": IMAGE_PROMPT_FROM_HISTORY_SYSTEM}
+        ]
+        for item in (history or [])[-6:]:
+            if isinstance(item, dict) and item.get("role") in ("user", "assistant"):
+                content = str(item.get("content") or "").strip()
+                if content:
+                    messages.append({"role": item["role"], "content": content})
+        messages.append(
+            {
+                "role": "user",
+                "content": "用户这次的画图需求：" + str(user_text or "").strip(),
+            }
+        )
+        try:
+            raw = await asyncio.to_thread(
+                self._sync_route_chat, cfg, messages, 0.7, 300
+            )
+        except providers.ProviderError as e:
+            self.ctx.log.info("生图提示词生成失败，退回用户原话: %s", e)
+            return ""
+        text = str(raw or "").strip()
+        text = re.sub(r"^```[A-Za-z0-9_-]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text).strip()
+        text = text.strip("\"'“”「」").strip()
+        if len(text) < 4:
+            return ""
+        return text[:400]
+
+    async def _force_image_chat(
+        self,
+        event,
+        cfg: dict,
+        messages: list,
+        history: list,
+        prompt: str,
+    ) -> str | None:
+        """生图意图兜底：写提示词 -> generate_image -> 发图 -> 主模型描述。
+
+        走账号/非 OpenAI 路由模式的确定性路径；生成失败返回 None 交给普通聊天。
+        """
+        image_cfg = self._image_gen_cfg()
+        image_prompt = await self._write_image_prompt_from_history(
+            cfg, history, prompt
+        )
+        if not image_prompt:
+            image_prompt = str(prompt or "").strip()
+        if not image_prompt:
+            return None
+        size = str(image_cfg.get("size") or "").strip()
+        if size not in IMAGE_SIZES:
+            size = "1024x1024"
+        output = await self._perform_image_tool(
+            event, cfg, {"prompt": image_prompt, "size": size}
+        )
+        try:
+            parsed = json.loads(output)
+        except Exception:
+            parsed = None
+        if not isinstance(parsed, dict) or not parsed.get("ok"):
+            self.ctx.log.info("强制生图失败，退回普通聊天: %s", str(output)[:120])
+            return None
+        instruction = (
+            f"【工具执行结果】generate_image：{output}\n"
+            "图片已发送。请用简短中文告诉用户画好了，并用一两句描述画面；"
+            "不要重复提示词原文，也不要说自己不能画图；"
+            "禁止用 ASCII、emoji、SVG 或代码块冒充图片。"
+        )
+        final_messages = list(messages) + [
+            {"role": "system", "content": instruction}
+        ]
+        try:
+            final = await asyncio.to_thread(
+                self._sync_chat, cfg, final_messages
+            )
+        except providers.ProviderError as e:
+            self.ctx.log.info("画图后的描述生成失败，用兜底文案: %s", e)
+            return IMAGE_PROMPT_FALLBACK_REPLY
+        text = str(final or "").strip()
+        return text or IMAGE_PROMPT_FALLBACK_REPLY
+
     async def _route_tool_chat(
         self,
         event,
@@ -1400,6 +1506,20 @@ class Plugin(PluginBase):
                     # 有的 OpenAI 兼容中转/本地模型不接受 tools 参数：退回普通聊天，
                     # 不因此让原本能用的对话失败
                     self.ctx.log.warning("工具调用失败，退回普通聊天: %s", e)
+                    answer = await asyncio.to_thread(self._sync_chat, cfg, messages)
+            elif (
+                not native_supported
+                and image_ok
+                and self._looks_like_image_request(prompt)
+            ):
+                # 生图意图确定性兜底：路由模型不可靠时直接走画图流程，
+                # 避免把「画张风景图」答成 ASCII/emoji 文字画。
+                forced = await self._force_image_chat(
+                    event, cfg, messages, history_messages, prompt
+                )
+                if forced is not None:
+                    answer = forced
+                else:
                     answer = await asyncio.to_thread(self._sync_chat, cfg, messages)
             elif not native_supported and (
                 python_ok or image_ok or shell_ok or skills_route

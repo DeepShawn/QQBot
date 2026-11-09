@@ -18,6 +18,30 @@ import imagegen
 from dispatcher import PluginBase
 from utils import at_seg, mentioned, strip_at, text_of, text_seg
 
+# 内置触发词兜底：用户常见的「画张/来一张/使用画图功能」等，不依赖配置
+BUILTIN_TRIGGERS = (
+    "使用画图功能",
+    "用画图功能",
+    "生成一张图",
+    "生成一张",
+    "生成图片",
+    "生成图",
+    "来一张",
+    "来张",
+    "画一张",
+    "画张",
+    "画幅",
+    "绘制",
+    "壁纸",
+    "画个",
+    "画只",
+    "画一幅",
+    "画一下",
+    "帮我画",
+    "用画图",
+    "使用画图",
+)
+
 
 class Plugin(PluginBase):
     name = "image_gen"
@@ -46,10 +70,12 @@ class Plugin(PluginBase):
         text = (text or "").strip()
         if not text:
             return None
-        for trigger in cfg.get("triggers") or []:
-            trigger = str(trigger)
-            if not trigger:
-                continue
+        triggers: list[str] = []
+        for item in list(cfg.get("triggers") or []) + list(BUILTIN_TRIGGERS):
+            trigger = str(item or "").strip()
+            if trigger and trigger not in triggers:
+                triggers.append(trigger)
+        for trigger in triggers:
             index = text.find(trigger)
             if index < 0:
                 continue
@@ -59,7 +85,12 @@ class Plugin(PluginBase):
             # 触发词后面没内容：退回去掉触发词后的全文（去空白）
             rest = (text[:index] + text[index + len(trigger):]).strip()
             rest = rest.strip("：: ，,。.！!？?~～").strip()
-            return rest or None
+            if rest:
+                return rest
+            if trigger in BUILTIN_TRIGGERS:
+                # 纯触发词（如「使用画图功能」）：用整句当提示词也要出图
+                return text
+            return None
         return None
 
     # ---------------- 生成并发送 ----------------
