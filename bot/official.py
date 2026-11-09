@@ -375,6 +375,9 @@ class OfficialClient:
                         await self._handle_payload(payload)
             except _Reconnect:
                 pass
+            code = getattr(conn, "close_code", None)
+            if code is not None:
+                self.log.warning("官方通道连接已关闭 code=%s reason=%s", code, getattr(conn, "close_reason", ""))
         finally:
             self.connected.clear()
             self._ws = None
@@ -392,11 +395,21 @@ class OfficialClient:
             interval = 30.0
 
         async def _loop():
+            self._acked = True
             while True:
                 await asyncio.sleep(interval)
                 ws = self._ws
                 if ws is None:
                     return
+                if not getattr(self, "_acked", True):
+                    # 上一次心跳没有收到 ACK：连接已经是半死状态（能连着但收不到事件），强制重连
+                    self.log.warning("官方通道心跳无应答，重新连接")
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    return
+                self._acked = False
                 try:
                     await ws.send(
                         json.dumps({"op": 1, "d": self._last_s}, ensure_ascii=False)
@@ -425,12 +438,15 @@ class OfficialClient:
             self._start_heartbeat(data.get("heartbeat_interval"))
             return
         if op == 11:  # heartbeat ack
+            self._acked = True
             return
         if op in (7, 9):  # 重连 / invalid session
+            self.log.warning("官方通道要求重连 op=%s", op)
             raise _Reconnect()
         if op != 0:  # 其它 op 忽略
             return
         event_type = str(payload.get("t") or "")
+        self.log.info("官方事件 t=%s s=%s", event_type, seq)
         if event_type == "READY":
             user = data.get("user") if isinstance(data.get("user"), dict) else {}
             raw = user.get("id")
