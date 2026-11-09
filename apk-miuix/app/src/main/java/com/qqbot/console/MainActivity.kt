@@ -14,6 +14,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,9 +30,14 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerDefaults
+import androidx.compose.foundation.pager.PagerSnapDistance
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +48,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -64,7 +71,9 @@ import com.qqbot.console.ui.HomePage
 import com.qqbot.console.ui.MorePage
 import com.qqbot.console.ui.RecordsPage
 import com.qqbot.console.ui.UpdatePromptHost
+import kotlin.math.abs
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
@@ -301,8 +310,10 @@ private val TABS = listOf(
 @Composable
 private fun MainScreen() {
     val ctx = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
     val scrollBehavior = MiuixScrollBehavior()
+    val pagerState = rememberPagerState(initialPage = 0, pageCount = { TABS.size })
+    val tab = pagerState.currentPage
 
     // 每 3 秒刷新一次状态；连不上时提示
     LaunchedEffect(Unit) {
@@ -324,7 +335,17 @@ private fun MainScreen() {
             GlassTabBar(
                 items = TABS.map { GlassTabItem(it.label, it.icon) },
                 selectedIndex = tab,
-                onSelect = { tab = it },
+                // 连续页偏移：currentPage + 当前页的 offsetFraction（滑动时逐帧变化）
+                pageOffset = { pagerState.currentPage + pagerState.currentPageOffsetFraction },
+                onSelect = { i ->
+                    scope.launch {
+                        // 点击 Tab：弹簧吸附滚到目标页（TabBar 胶囊会跟着连续滑动）
+                        pagerState.animateScrollToPage(
+                            i,
+                            animationSpec = spring(dampingRatio = 0.86f, stiffness = 420f),
+                        )
+                    }
+                },
                 modifier = Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
             )
         },
@@ -348,23 +369,55 @@ private fun MainScreen() {
                     Text("连接管理服务…", color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                 }
             } else {
-                Column(Modifier.fillMaxSize().statusBarsPadding()) {
-                    // 页面自己的大标题（原来在黑色顶栏里，现在直接画在背景光斑上）
-                    Text(
-                        TABS[tab].title,
-                        fontSize = 30.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = GlassText.primary,
-                        modifier = Modifier.padding(start = 28.dp, top = 8.dp, bottom = 6.dp),
-                    )
-                    // 关键：页面内容必须放在有界剩余高度里，否则 LazyColumn 会被测量成无限高、滑不动
-                    Box(Modifier.fillMaxWidth().weight(1f)) {
-                        when (tab) {
-                            0 -> HomePage(pagePadding, scrollBehavior)
-                            1 -> AiPage(pagePadding, scrollBehavior)
-                            2 -> GroupPage(pagePadding, scrollBehavior)
-                            3 -> RecordsPage(pagePadding, scrollBehavior)
-                            else -> MorePage(pagePadding, scrollBehavior)
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                    // 预组合相邻页，滑动时不留白
+                    beyondViewportPageCount = 1,
+                    // 松手弹簧吸附；最多一次滑 3 页
+                    flingBehavior = PagerDefaults.flingBehavior(
+                        state = pagerState,
+                        pagerSnapDistance = PagerSnapDistance.atMost(3),
+                        snapAnimationSpec = spring(dampingRatio = 0.86f, stiffness = 420f),
+                    ),
+                ) { page ->
+                    val offsetFraction = pagerState.currentPageOffsetFraction
+                    Column(
+                        Modifier
+                            .fillMaxSize()
+                            .statusBarsPadding()
+                            // 相邻页：视差 + 缩放 0.96 + 透明度 0.6；只在 graphicsLayer 里读偏移，不逐帧重组
+                            .graphicsLayer {
+                                val off = ((pagerState.currentPage - page) + offsetFraction).coerceIn(-1f, 1f)
+                                val a = abs(off)
+                                scaleX = 1f - 0.04f * a
+                                scaleY = 1f - 0.04f * a
+                                alpha = 1f - 0.40f * a
+                                translationX = off * 36.dp.toPx()
+                            },
+                    ) {
+                        // 页面大标题：带一点反向视差，滑动时比内容慢
+                        Text(
+                            TABS[page].title,
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = GlassText.primary,
+                            modifier = Modifier
+                                .padding(start = 28.dp, top = 8.dp, bottom = 6.dp)
+                                .graphicsLayer {
+                                    val off = ((pagerState.currentPage - page) + offsetFraction).coerceIn(-1f, 1f)
+                                    translationX = off * 18.dp.toPx()
+                                },
+                        )
+                        // 垂直列表在 pager 内层滚动：横向手势归 pager，纵向归 LazyColumn
+                        Box(Modifier.fillMaxWidth().weight(1f)) {
+                            when (page) {
+                                0 -> HomePage(pagePadding, scrollBehavior)
+                                1 -> AiPage(pagePadding, scrollBehavior)
+                                2 -> GroupPage(pagePadding, scrollBehavior)
+                                3 -> RecordsPage(pagePadding, scrollBehavior)
+                                else -> MorePage(pagePadding, scrollBehavior)
+                            }
                         }
                     }
                 }

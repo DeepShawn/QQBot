@@ -3,7 +3,9 @@ package com.qqbot.console.ui
 import android.provider.Settings
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -15,6 +17,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -26,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
@@ -42,21 +46,26 @@ import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
@@ -229,6 +238,12 @@ fun Modifier.glass(
                 glow?.let { drawRect(it) }
                 drawRect(sheen)
                 specular?.let { drawRect(it) }
+                // 更细的顶部内高光（0.5dp）
+                drawRect(
+                    color = Color.White.copy(alpha = if (GlassTokens.dark) 0.10f else 0.55f),
+                    topLeft = Offset(0f, 0.5.dp.toPx()),
+                    size = Size(size.width, 0.5.dp.toPx()),
+                )
             }
         }
         // border 在链尾：描边画在内容之上，滚动到边缘也清晰
@@ -418,7 +433,11 @@ fun GlassButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) 0.96f else 1f, label = "glassButtonScale")
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = 700f),
+        label = "glassButtonScale",
+    )
     val shape = RoundedCornerShape(50)
     val accent = LocalAccent.current
 
@@ -448,61 +467,93 @@ fun GlassButton(
 /** 浮动胶囊玻璃底栏项。 */
 data class GlassTabItem(val label: String, val icon: ImageVector)
 
-/** 浮动胶囊玻璃底栏（5 Tab，选中项高光胶囊）。 */
+/**
+ * 浮动胶囊玻璃底栏（5 Tab）。
+ * [pageOffset] 是 pager 的连续页偏移（currentPage + offsetFraction），
+ * 选中胶囊在 layout 阶段随它连续移动（不逐帧重组）；点击走动画滚页。
+ */
 @Composable
 fun GlassTabBar(
     items: List<GlassTabItem>,
     selectedIndex: Int,
+    pageOffset: () -> Float,
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (items.isEmpty()) return
+    val count = items.size
     val shape = RoundedCornerShape(GlassRadius.xl)
     val accent = LocalAccent.current
-    Row(
+    val density = androidx.compose.ui.platform.LocalDensity.current
+
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxWidth()
             .height(64.dp)
             .shadow(16.dp, shape, ambientColor = GlassTokens.shadowAmbient, spotColor = GlassTokens.shadowSpot)
             .glass(GlassLevel.Thick, shape)
             .padding(6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        items.forEachIndexed { i, item ->
-            val selected = i == selectedIndex
-            val tint = if (selected) (if (GlassTokens.dark) accent.onGlass else accent.primary) else GlassText.secondary
-            val interaction = remember(i) { MutableInteractionSource() }
-            val pressed by interaction.collectIsPressedAsState()
-            val scale by animateFloatAsState(if (pressed) 0.92f else 1f, label = "glassTabScale")
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .graphicsLayer { scaleX = scale; scaleY = scale }
-                    .clip(RoundedCornerShape(26.dp))
-                    .then(
-                        if (selected) {
-                            Modifier
-                                .background(accent.fill)
-                                .border(
-                                    1.dp,
-                                    Brush.verticalGradient(listOf(accent.primary.copy(alpha = 0.55f), Color(0x0FFFFFFF))),
-                                    RoundedCornerShape(26.dp),
-                                )
-                        } else Modifier,
-                    )
-                    .clickable(interactionSource = interaction, indication = null) { onSelect(i) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(imageVector = item.icon, contentDescription = item.label, tint = tint, modifier = Modifier.size(24.dp))
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        item.label,
-                        color = tint,
-                        fontSize = 11.sp,
-                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                    )
+        val itemWidth = maxWidth / count
+        val indicatorWidth = itemWidth - 4.dp
+
+        // 选中胶囊：连续跟随 pageOffset（layout 阶段读，不触发重组）
+        Box(
+            Modifier
+                .offset {
+                    val off = pageOffset().coerceIn(0f, (count - 1).toFloat())
+                    IntOffset((off * itemWidth.toPx()).toInt(), 0)
+                }
+                .width(indicatorWidth)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(26.dp))
+                .background(accent.fill)
+                .border(
+                    1.dp,
+                    Brush.verticalGradient(listOf(accent.primary.copy(alpha = 0.55f), Color(0x0FFFFFFF))),
+                    RoundedCornerShape(26.dp),
+                ),
+        )
+
+        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+            items.forEachIndexed { i, item ->
+                val selected = i == selectedIndex
+                val tint = if (selected) {
+                    if (GlassTokens.dark) accent.onGlass else accent.primary
+                } else {
+                    GlassText.secondary
+                }
+                val interaction = remember(i) { MutableInteractionSource() }
+                val pressed by interaction.collectIsPressedAsState()
+                val scale by animateFloatAsState(
+                    targetValue = if (pressed) 0.92f else 1f,
+                    animationSpec = spring(dampingRatio = 0.5f, stiffness = 800f),
+                    label = "glassTabScale",
+                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .graphicsLayer { scaleX = scale; scaleY = scale }
+                        .clip(RoundedCornerShape(26.dp))
+                        .clickable(interactionSource = interaction, indication = null) { onSelect(i) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = item.icon,
+                            contentDescription = item.label,
+                            tint = tint,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            item.label,
+                            color = tint,
+                            fontSize = 11.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                        )
+                    }
                 }
             }
         }

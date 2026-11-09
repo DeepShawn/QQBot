@@ -5,7 +5,19 @@ import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -55,48 +67,8 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var logs by remember { mutableStateOf<String?>(null) }
     var confirmReinstall by remember { mutableStateOf(false) }
     var showPython by remember { mutableStateOf(false) }
-    var showKeywords by remember { mutableStateOf(false) }
-    var showPlugins by remember { mutableStateOf(false) }
-    var showTasks by remember { mutableStateOf(false) }
-    var showSkills by remember { mutableStateOf(false) }
-    var showScheduled by remember { mutableStateOf(false) }
-    var showSafety by remember { mutableStateOf(false) }
-    var showOfficial by remember { mutableStateOf(false) }
-    var showTheme by remember { mutableStateOf(false) }
-
-    // 全屏管理页：提前返回，页面自己带「返回更多」
-    if (showKeywords) {
-        KeywordManagerPage(padding, scrollBehavior) { showKeywords = false }
-        return
-    }
-    if (showPlugins) {
-        PluginManagerPage(padding, scrollBehavior) { showPlugins = false }
-        return
-    }
-    if (showTasks) {
-        TaskManagerPage(padding, scrollBehavior) { showTasks = false }
-        return
-    }
-    if (showSkills) {
-        SkillManagerPage(padding, scrollBehavior) { showSkills = false }
-        return
-    }
-    if (showScheduled) {
-        ScheduledMessagePage(padding, scrollBehavior) { showScheduled = false }
-        return
-    }
-    if (showSafety) {
-        SafetyPage(padding, scrollBehavior) { showSafety = false }
-        return
-    }
-    if (showOfficial) {
-        OfficialBotPage(padding, scrollBehavior) { showOfficial = false }
-        return
-    }
-    if (showTheme) {
-        ThemePage(padding, scrollBehavior) { showTheme = false }
-        return
-    }
+    // 二级页：null = 更多主页；其它 = 对应的全屏管理页（用 AnimatedContent 做右侧滑入）
+    var activePage by remember { mutableStateOf<String?>(null) }
 
     // ---------- 后台运行 ----------
     var keepAlive by remember { mutableStateOf(ProotService.keepAliveEnabled(ctx)) }
@@ -175,7 +147,32 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val rules = kw.optJSONArray("rules")?.objects().orEmpty()
     val ig = Store.cfg("plugins", "image_gen") ?: JSONObject()
 
-    PageList(padding, scrollBehavior) {
+    AnimatedContent(
+        targetState = activePage,
+        transitionSpec = {
+            val opening = targetState != null
+            if (opening) {
+                // 进入二级页：从右侧滑入 + 淡入 + 轻微放大（spring）
+                (slideInHorizontally(animationSpec = spring(dampingRatio = 0.9f, stiffness = 420f)) { full -> full / 4 } +
+                    fadeIn(animationSpec = tween(220)) +
+                    scaleIn(initialScale = 0.985f, animationSpec = tween(220))) togetherWith
+                    (slideOutHorizontally(animationSpec = spring(dampingRatio = 0.9f, stiffness = 420f)) { full -> -full / 10 } +
+                        fadeOut(animationSpec = tween(150)) +
+                        scaleOut(targetScale = 0.985f, animationSpec = tween(150)))
+            } else {
+                // 返回：反向滑出 + 淡出
+                (slideInHorizontally(animationSpec = spring(dampingRatio = 0.9f, stiffness = 420f)) { full -> -full / 4 } +
+                    fadeIn(animationSpec = tween(220)) +
+                    scaleIn(initialScale = 0.985f, animationSpec = tween(220))) togetherWith
+                    (slideOutHorizontally(animationSpec = spring(dampingRatio = 0.9f, stiffness = 420f)) { full -> full / 4 } +
+                        fadeOut(animationSpec = tween(180)) +
+                        scaleOut(targetScale = 0.985f, animationSpec = tween(180)))
+            }
+        },
+        label = "moreSecondary",
+    ) { page ->
+        if (page == null) {
+            PageList(padding, scrollBehavior) {
         group("关键词回复") {
             ConfigSwitch("启用", null, "plugins", "keyword", "enabled", default = true)
             ConfigSwitch("群里必须 @ 才回", null, "plugins", "keyword", "group_require_at", default = true)
@@ -397,42 +394,42 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             ArrowPreference(
                 title = "关键词管理",
                 summary = "关键词回复规则增删改、联网搜索 / 画图触发词",
-                onClick = { showKeywords = true },
+                onClick = { activePage = "keywords" },
             )
             ArrowPreference(
                 title = "插件管理",
                 summary = "开关各插件，配置 Python 工具（是否让 AI 自己运行 / 超时）",
-                onClick = { showPlugins = true },
+                onClick = { activePage = "plugins" },
             )
             ArrowPreference(
                 title = "任务（终端）",
                 summary = "在机器人运行环境里执行命令，看输出 / 停止",
-                onClick = { showTasks = true },
+                onClick = { activePage = "tasks" },
             )
             ArrowPreference(
                 title = "技能",
                 summary = "管理 AI 技能（Markdown 文件），可新建 / 编辑 / 删除",
-                onClick = { showSkills = true },
+                onClick = { activePage = "skills" },
             )
             ArrowPreference(
                 title = "定时消息",
                 summary = "每隔一段时间自动发一条问候（语言模型 + 画图模型）",
-                onClick = { showScheduled = true },
+                onClick = { activePage = "scheduled" },
             )
             ArrowPreference(
                 title = "防封模式",
                 summary = "随机延迟、发送限频、群白名单、隐藏链接、敏感词",
-                onClick = { showSafety = true },
+                onClick = { activePage = "safety" },
             )
             ArrowPreference(
                 title = "官方机器人",
                 summary = "用 q.qq.com 官方机器人通道（不登个人号），注意平台限制",
-                onClick = { showOfficial = true },
+                onClick = { activePage = "official" },
             )
             ArrowPreference(
                 title = "主题色",
                 summary = "切换玻璃强调色（按钮 / 选中态 / 开关 / 背景光斑）",
-                onClick = { showTheme = true },
+                onClick = { activePage = "theme" },
             )
             ArrowPreference(
                 title = "运行 Python 代码",
@@ -456,6 +453,19 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 summary = "环境损坏时用，会覆盖现有环境",
                 onClick = { confirmReinstall = true },
             )
+        }
+            }
+        } else {
+            when (page) {
+                "keywords" -> KeywordManagerPage(padding, scrollBehavior) { activePage = null }
+                "plugins" -> PluginManagerPage(padding, scrollBehavior) { activePage = null }
+                "tasks" -> TaskManagerPage(padding, scrollBehavior) { activePage = null }
+                "skills" -> SkillManagerPage(padding, scrollBehavior) { activePage = null }
+                "scheduled" -> ScheduledMessagePage(padding, scrollBehavior) { activePage = null }
+                "safety" -> SafetyPage(padding, scrollBehavior) { activePage = null }
+                "official" -> OfficialBotPage(padding, scrollBehavior) { activePage = null }
+                "theme" -> ThemePage(padding, scrollBehavior) { activePage = null }
+            }
         }
     }
 
