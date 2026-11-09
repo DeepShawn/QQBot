@@ -30,6 +30,7 @@ DEFAULTS = {
     "ui": {
         "accent": "ice",
         "theme": "dark",
+        "low_power": False,
     },
     "safety": {
         "low_risk": True,

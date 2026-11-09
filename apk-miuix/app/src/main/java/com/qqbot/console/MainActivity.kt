@@ -14,7 +14,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -120,8 +122,13 @@ class MainActivity : ComponentActivity() {
                 "system" -> systemDark
                 else -> true   // dark（默认）
             }
-            // 玻璃 tokens 是全局单例（getter 读取 dark），这里同步主题并让状态栏图标颜色跟随
-            SideEffect { GlassTokens.dark = dark }
+            // 低功耗模式（ui.low_power）：弱化动画/高光/阴影/按压反馈
+            val lowPower = Store.bool("config", "ui", "low_power", def = false)
+            // 玻璃 tokens 是全局单例（getter 读取 dark / lowPower），这里同步主题并让状态栏图标颜色跟随
+            SideEffect {
+                GlassTokens.dark = dark
+                GlassTokens.lowPower = lowPower
+            }
             SideEffect {
                 try {
                     val insets = WindowCompat.getInsetsController(window, window.decorView)
@@ -314,6 +321,10 @@ private fun MainScreen() {
     val scrollBehavior = MiuixScrollBehavior()
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { TABS.size })
     val tab = pagerState.currentPage
+    // 低功耗模式：关闭页间变换、缩短吸附动画、减少预组合页
+    val lowPower = GlassTokens.lowPower
+    val snapSpec: AnimationSpec<Float> =
+        if (lowPower) tween(140) else spring(dampingRatio = 0.86f, stiffness = 420f)
 
     // 每 3 秒刷新一次状态；连不上时提示
     LaunchedEffect(Unit) {
@@ -339,13 +350,12 @@ private fun MainScreen() {
                 pageOffset = { pagerState.currentPage + pagerState.currentPageOffsetFraction },
                 onSelect = { i ->
                     scope.launch {
-                        // 点击 Tab：弹簧吸附滚到目标页（TabBar 胶囊会跟着连续滑动）
-                        pagerState.animateScrollToPage(
-                            i,
-                            animationSpec = spring(dampingRatio = 0.86f, stiffness = 420f),
-                        )
+                        // 点击 / 底栏滑动松手：弹簧吸附滚到目标页（TabBar 胶囊会连续跟随）
+                        pagerState.animateScrollToPage(i, animationSpec = snapSpec)
                     }
                 },
+                // 底栏拖动：直接请求 pager 滚到「页 + 分数」，胶囊随 pageOffset 连续移动
+                onDragToPage = { page, fraction -> pagerState.requestScrollToPage(page, fraction) },
                 modifier = Modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
             )
         },
@@ -372,13 +382,13 @@ private fun MainScreen() {
                 HorizontalPager(
                     state = pagerState,
                     modifier = Modifier.fillMaxSize(),
-                    // 预组合相邻页，滑动时不留白
-                    beyondViewportPageCount = 1,
+                    // 预组合相邻页，滑动时不留白；低功耗模式不预组合，省内存
+                    beyondViewportPageCount = if (lowPower) 0 else 1,
                     // 松手弹簧吸附；最多一次滑 3 页
                     flingBehavior = PagerDefaults.flingBehavior(
                         state = pagerState,
                         pagerSnapDistance = PagerSnapDistance.atMost(3),
-                        snapAnimationSpec = spring(dampingRatio = 0.86f, stiffness = 420f),
+                        snapAnimationSpec = snapSpec,
                     ),
                 ) { page ->
                     val offsetFraction = pagerState.currentPageOffsetFraction
@@ -388,12 +398,16 @@ private fun MainScreen() {
                             .statusBarsPadding()
                             // 相邻页：视差 + 缩放 0.96 + 透明度 0.6；只在 graphicsLayer 里读偏移，不逐帧重组
                             .graphicsLayer {
-                                val off = ((pagerState.currentPage - page) + offsetFraction).coerceIn(-1f, 1f)
-                                val a = abs(off)
-                                scaleX = 1f - 0.04f * a
-                                scaleY = 1f - 0.04f * a
-                                alpha = 1f - 0.40f * a
-                                translationX = off * 36.dp.toPx()
+                                if (GlassTokens.lowPower) {
+                                    scaleX = 1f; scaleY = 1f; alpha = 1f; translationX = 0f
+                                } else {
+                                    val off = ((pagerState.currentPage - page) + offsetFraction).coerceIn(-1f, 1f)
+                                    val a = abs(off)
+                                    scaleX = 1f - 0.04f * a
+                                    scaleY = 1f - 0.04f * a
+                                    alpha = 1f - 0.40f * a
+                                    translationX = off * 36.dp.toPx()
+                                }
                             },
                     ) {
                         // 页面大标题：带一点反向视差，滑动时比内容慢
@@ -405,8 +419,12 @@ private fun MainScreen() {
                             modifier = Modifier
                                 .padding(start = 28.dp, top = 8.dp, bottom = 6.dp)
                                 .graphicsLayer {
-                                    val off = ((pagerState.currentPage - page) + offsetFraction).coerceIn(-1f, 1f)
-                                    translationX = off * 18.dp.toPx()
+                                    if (GlassTokens.lowPower) {
+                                        translationX = 0f
+                                    } else {
+                                        val off = ((pagerState.currentPage - page) + offsetFraction).coerceIn(-1f, 1f)
+                                        translationX = off * 18.dp.toPx()
+                                    }
                                 },
                         )
                         // 垂直列表在 pager 内层滚动：横向手势归 pager，纵向归 LazyColumn

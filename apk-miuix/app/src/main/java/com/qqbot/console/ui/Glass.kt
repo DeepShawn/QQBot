@@ -13,6 +13,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +56,7 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -67,6 +69,8 @@ import top.yukonga.miuix.kmp.basic.Text
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.roundToInt
 import kotlin.math.sin
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 
@@ -117,6 +121,12 @@ object GlassTokens {
      * 所有 token 都是 getter，切换主题会立即使读取它们的 Compose 组件重组。
      */
     var dark by mutableStateOf(true)
+
+    /**
+     * 低功耗模式（config `ui.low_power`）：停背景动画、弱化玻璃高光/镜面/阴影、
+     * 关闭按压 spring 与页间变换。MainActivity 写入，切换即时生效。
+     */
+    var lowPower by mutableStateOf(false)
 
     // ---------- 语义色 ----------
     val success get() = if (dark) Color(0xFF30D158) else Color(0xFF1E9E4A)
@@ -180,11 +190,14 @@ object GlassTokens {
 
     fun spec(level: GlassLevel): GlassSpec {
         val spot = if (dark) Color(0x99000000) else Color(0x1F1B2340)
+        // 低功耗：高光/镜面减弱、去掉浮层阴影；填充与文字不变，保证可读性
+        val sheenScale = if (lowPower) 0.35f else 1f
+        val shadow = !lowPower
         return when (level) {
-            GlassLevel.Thin -> GlassSpec(thinFill, 0.05f, thinRim, false, 0.dp, Color.Transparent)
-            GlassLevel.Regular -> GlassSpec(regularFill, 0.08f, regularRim, false, 0.dp, Color.Transparent)
-            GlassLevel.Thick -> GlassSpec(thickFill, 0.10f, thickRim, true, 16.dp, spot)
-            GlassLevel.Overlay -> GlassSpec(overlayFill, 0.08f, overlayRim, true, 24.dp, spot)
+            GlassLevel.Thin -> GlassSpec(thinFill, 0.05f * sheenScale, thinRim, false, 0.dp, Color.Transparent)
+            GlassLevel.Regular -> GlassSpec(regularFill, 0.08f * sheenScale, regularRim, false, 0.dp, Color.Transparent)
+            GlassLevel.Thick -> GlassSpec(thickFill, 0.10f * sheenScale, thickRim, false, if (shadow) 16.dp else 0.dp, spot)
+            GlassLevel.Overlay -> GlassSpec(overlayFill, 0.08f * sheenScale, overlayRim, false, if (shadow) 24.dp else 0.dp, spot)
             GlassLevel.Ink -> GlassSpec(inkFill, 0f, inkRim, false, 0.dp, Color.Transparent)
             GlassLevel.Inset -> GlassSpec(insetFill, 0f, insetRim, false, 0.dp, Color.Transparent)
         }
@@ -220,7 +233,7 @@ fun Modifier.glass(
                 0f to Color.White.copy(alpha = spec.sheen),
                 0.45f to Color.Transparent,
             )
-            val specular = if (spec.specular) {
+            val specular = if (spec.specular && !GlassTokens.lowPower) {
                 Brush.radialGradient(
                     colors = listOf(Color(0x1AFFFFFF), Color.Transparent),
                     center = Offset(size.width * 0.22f, 0f),
@@ -238,12 +251,14 @@ fun Modifier.glass(
                 glow?.let { drawRect(it) }
                 drawRect(sheen)
                 specular?.let { drawRect(it) }
-                // 更细的顶部内高光（0.5dp）
-                drawRect(
-                    color = Color.White.copy(alpha = if (GlassTokens.dark) 0.10f else 0.55f),
-                    topLeft = Offset(0f, 0.5.dp.toPx()),
-                    size = Size(size.width, 0.5.dp.toPx()),
-                )
+                // 更细的顶部内高光（0.5dp）；低功耗模式省略
+                if (!GlassTokens.lowPower) {
+                    drawRect(
+                        color = Color.White.copy(alpha = if (GlassTokens.dark) 0.10f else 0.55f),
+                        topLeft = Offset(0f, 0.5.dp.toPx()),
+                        size = Size(size.width, 0.5.dp.toPx()),
+                    )
+                }
             }
         }
         // border 在链尾：描边画在内容之上，滚动到边缘也清晰
@@ -270,6 +285,7 @@ fun GlassBackdrop(modifier: Modifier = Modifier) {
     val ctx = LocalContext.current
     val accent = LocalAccent.current
     val dark = GlassTokens.dark
+    val lowPower = GlassTokens.lowPower
 
     // 尊重系统「动画时长缩放 = 0」（移除动画）
     val animationsEnabled = remember(ctx) {
@@ -280,7 +296,8 @@ fun GlassBackdrop(modifier: Modifier = Modifier) {
         }
     }
     val transition = rememberInfiniteTransition(label = "glassBackdrop")
-    val driftState: State<Float> = if (animationsEnabled) {
+    val animate = animationsEnabled && !lowPower
+    val driftState: State<Float> = if (animate) {
         transition.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
@@ -290,7 +307,7 @@ fun GlassBackdrop(modifier: Modifier = Modifier) {
     } else {
         remember { mutableFloatStateOf(0.25f) }
     }
-    val breathState: State<Float> = if (animationsEnabled) {
+    val breathState: State<Float> = if (animate) {
         transition.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
@@ -434,7 +451,7 @@ fun GlassButton(
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.96f else 1f,
+        targetValue = if (pressed && !GlassTokens.lowPower) 0.96f else 1f,
         animationSpec = spring(dampingRatio = 0.55f, stiffness = 700f),
         label = "glassButtonScale",
     )
@@ -478,6 +495,7 @@ fun GlassTabBar(
     selectedIndex: Int,
     pageOffset: () -> Float,
     onSelect: (Int) -> Unit,
+    onDragToPage: (page: Int, offsetFraction: Float) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (items.isEmpty()) return
@@ -492,7 +510,32 @@ fun GlassTabBar(
             .height(64.dp)
             .shadow(16.dp, shape, ambientColor = GlassTokens.shadowAmbient, spotColor = GlassTokens.shadowSpot)
             .glass(GlassLevel.Thick, shape)
-            .padding(6.dp),
+            .padding(6.dp)
+            // 底栏上左右滑动选择 Tab：胶囊跟手连续移动，松手吸附最近页并驱动 pager
+            .pointerInput(count) {
+                val itemPx = size.width.toFloat() / count
+                var startOffset = 0f
+                var accum = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = {
+                        startOffset = pageOffset().coerceIn(0f, (count - 1).toFloat())
+                        accum = 0f
+                    },
+                    onHorizontalDrag = { change, dragAmount ->
+                        change.consume()   // 消费横向手势，避免带动页面/列表
+                        accum += dragAmount
+                        val abs = (startOffset + accum / itemPx).coerceIn(0f, (count - 1).toFloat())
+                        val page = floor(abs).toInt().coerceIn(0, count - 1)
+                        val frac = if (page == count - 1) 0f else abs - page
+                        onDragToPage(page, frac)
+                    },
+                    onDragEnd = {
+                        val abs = (startOffset + accum / itemPx).coerceIn(0f, (count - 1).toFloat())
+                        onSelect(abs.roundToInt().coerceIn(0, count - 1))
+                    },
+                    onDragCancel = {},
+                )
+            },
     ) {
         val itemWidth = maxWidth / count
         val indicatorWidth = itemWidth - 4.dp
@@ -526,7 +569,7 @@ fun GlassTabBar(
                 val interaction = remember(i) { MutableInteractionSource() }
                 val pressed by interaction.collectIsPressedAsState()
                 val scale by animateFloatAsState(
-                    targetValue = if (pressed) 0.92f else 1f,
+                    targetValue = if (pressed && !GlassTokens.lowPower) 0.92f else 1f,
                     animationSpec = spring(dampingRatio = 0.5f, stiffness = 800f),
                     label = "glassTabScale",
                 )

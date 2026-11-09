@@ -121,6 +121,11 @@ fun ThemePage(padding: PaddingValues, scrollBehavior: ScrollBehavior, onBack: ()
                     }
                 },
             )
+            ConfigSwitch(
+                "低功耗模式",
+                "适合低端机 / 发热 / 卡顿时开启：停背景动画、弱化玻璃高光与阴影、关闭页间缩放视差和按压回弹",
+                "ui", "low_power", default = false,
+            )
             Hint("浅色模式使用白系玻璃 + 深色文字；「跟随系统」跟随手机的深色模式开关。")
         }
 
