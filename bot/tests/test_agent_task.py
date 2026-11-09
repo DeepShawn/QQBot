@@ -15,6 +15,8 @@ if str(BOT_DIR) not in sys.path:
 
 import accounts_chatgpt  # noqa: E402
 import agent  # noqa: E402
+import onebot  # noqa: E402
+import official  # noqa: E402
 import providers  # noqa: E402
 import shelltool  # noqa: E402
 from plugins import commands  # noqa: E402
@@ -55,6 +57,7 @@ class FakeApi:
     def __init__(self):
         self.member = {"role": "member"}
         self.calls: list = []
+        self.kind = "onebot"
 
     async def call(self, action, **params):
         self.calls.append((action, params))
@@ -650,6 +653,141 @@ class AgentLoopTests(unittest.IsolatedAsyncioTestCase):
         await self.run_agent()
         names = {t["function"]["name"] for t in self.native_calls[0]["tools"]}
         self.assertEqual(names, {"run_shell", "run_python", "install_package"})
+
+
+class OfficialProgressBudgetTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.ctx = FakeCtx(
+            self.root,
+            ai_cfg={"provider": "openai", "api_key": "key", "model": "m", "auth": ""},
+            admins=[10001],
+        )
+        self.ctx.api.kind = "official"
+        self.native_calls: list = []
+        self.native_script: list = []
+        self.shell_calls: list = []
+        self._orig_native = agent.providers.chat_with_tools
+        self._orig_shell = agent.shelltool.run_shell
+        self.addCleanup(setattr, agent.providers, "chat_with_tools", self._orig_native)
+        self.addCleanup(setattr, agent.shelltool, "run_shell", self._orig_shell)
+
+    def install_native(self, script):
+        self.native_script = list(script)
+
+        def fake(**kwargs):
+            self.native_calls.append(kwargs)
+            if not self.native_script:
+                return {"content": "默认结束", "tool_calls": []}
+            return self.native_script.pop(0)
+
+        agent.providers.chat_with_tools = fake
+
+    def install_shell(self):
+        def fake(command, cwd=None, timeout=60, env_extra=None):
+            self.shell_calls.append(command)
+            return {"stdout": "ok", "stderr": "", "exit_code": 0, "timed_out": False}
+
+        agent.shelltool.run_shell = fake
+
+    def tool_call(self, call_id, name, arguments):
+        return {
+            "id": call_id,
+            "name": name,
+            "arguments": json.dumps(arguments, ensure_ascii=False),
+        }
+
+    def shell_steps(self, count):
+        return [
+            {
+                "content": "",
+                "tool_calls": [
+                    self.tool_call(f"c{i}", "run_shell", {"command": f"echo {i}"})
+                ],
+            }
+            for i in range(count)
+        ]
+
+    async def run_agent(self, prompt="做任务"):
+        return await agent.run_task(self.ctx, _event("/task " + prompt), prompt)
+
+    def progress_replies(self):
+        return [r for r in self.ctx.replies[1:] if not r.startswith(("🎉", "⚠️"))]
+
+    async def test_total_replies_within_five_and_final_reserved(self):
+        self.install_native(self.shell_steps(6) + [{"content": "完成", "tool_calls": []}])
+        self.install_shell()
+        # 模拟 commands 先发的「任务已开始」占掉第 1 条
+        self.ctx.replies.append("🚀 任务已开始…（发 /task stop 可停止）")
+        result = await self.run_agent()
+        self.assertTrue(result["ok"])
+        self.assertLessEqual(len(self.ctx.replies), agent.OFFICIAL_MAX_REPLIES)
+        self.assertLessEqual(
+            len(self.progress_replies()), agent.OFFICIAL_PROGRESS_BUDGET
+        )
+        self.assertTrue(self.ctx.replies[-1].startswith("🎉 任务完成"))
+        # 合并：一条进度里包含多步（换行 + ✅）
+        self.assertTrue(
+            any("\n" in r and "✅" in r for r in self.progress_replies())
+        )
+        self.assertLess(len(self.progress_replies()), 6)
+
+    async def test_install_progress_merged_into_batch(self):
+        self.install_native(
+            [
+                {
+                    "content": "",
+                    "tool_calls": [
+                        self.tool_call(
+                            "c1", "install_package", {"manager": "apt", "name": "ffmpeg"}
+                        )
+                    ],
+                },
+                {"content": "完成", "tool_calls": []},
+            ]
+        )
+        self.install_shell()
+        self.ctx.replies.append("🚀 任务已开始…（发 /task stop 可停止）")
+        await self.run_agent()
+        self.assertLessEqual(len(self.ctx.replies), agent.OFFICIAL_MAX_REPLIES)
+        joined = "\n".join(self.progress_replies())
+        self.assertIn("📦 正在安装 ffmpeg", joined)
+        # 安装提示不单独占一条：含 📦 的那条同时含步骤完成
+        install_msg = next(r for r in self.progress_replies() if "📦" in r)
+        self.assertIn("✅", install_msg)
+
+    async def test_many_steps_still_reserves_final(self):
+        self.install_native(
+            self.shell_steps(agent.MAX_STEPS - 1) + [{"content": "完成", "tool_calls": []}]
+        )
+        self.install_shell()
+        self.ctx.replies.append("🚀 任务已开始…（发 /task stop 可停止）")
+        await self.run_agent()
+        self.assertLessEqual(len(self.ctx.replies), agent.OFFICIAL_MAX_REPLIES)
+        self.assertTrue(self.ctx.replies[-1].startswith("🎉"))
+        self.assertLessEqual(
+            len(self.progress_replies()), agent.OFFICIAL_PROGRESS_BUDGET
+        )
+
+    async def test_non_official_still_reports_each_step(self):
+        self.ctx.api.kind = "onebot"
+        self.install_native(self.shell_steps(2) + [{"content": "完成", "tool_calls": []}])
+        self.install_shell()
+        await self.run_agent()
+        replies = "\n".join(self.ctx.replies)
+        self.assertIn("🛠 第1步", replies)
+        self.assertIn("✅ 第1步完成", replies)
+        self.assertIn("🛠 第2步", replies)
+        self.assertIn("✅ 第2步完成", replies)
+        self.assertGreater(len(self.ctx.replies), 4)
+
+    async def test_client_kind_attributes(self):
+        self.assertEqual(onebot.OneBotClient.kind, "onebot")
+        self.assertEqual(official.OfficialClient.kind, "official")
+        self.assertEqual(onebot.OneBotClient("ws://127.0.0.1:1").kind, "onebot")
+        self.assertEqual(official.OfficialClient("a", "b", data_dir=self.root).kind, "official")
 
 
 class InstallAndPermissionTests(unittest.IsolatedAsyncioTestCase):

@@ -28,6 +28,11 @@ import shelltool
 MAX_STEPS = 10
 MAX_TOTAL_SECONDS = 600.0
 MAX_PROGRESS_MESSAGES = 15
+# 官方通道：一条入站消息最多 5 条回复（含 commands 的「任务已开始」+ 最终结果）
+OFFICIAL_MAX_REPLIES = 5
+OFFICIAL_PROGRESS_BUDGET = OFFICIAL_MAX_REPLIES - 2  # 预留开始 + 最终
+OFFICIAL_BATCH_LINES = 4  # 约每 2 步合并一条进度
+OFFICIAL_BATCH_CHARS = 800
 SUMMARY_CHARS = 300
 MODEL_TEMPERATURE = 0.3
 MODEL_MAX_TOKENS = 1500
@@ -284,18 +289,56 @@ def _execute_action(action: dict, data_dir=None) -> dict:
 
 
 class _Progress:
+    """进度汇报。OneBot 每步实时发；官方通道合并到预算内并预留最终结果。"""
+
     def __init__(self, ctx, event):
         self.ctx = ctx
         self.event = event
         self.count = 0
+        self.official = getattr(getattr(ctx, "api", None), "kind", "") == "official"
+        self._batch: list[str] = []
+        self._batches = 0
 
     async def say(self, text: str, final: bool = False) -> None:
-        if not final and self.count >= MAX_PROGRESS_MESSAGES:
+        if final:
+            if self.official:
+                await self._flush_progress()
+            try:
+                await self.ctx.reply(self.event, text)
+            except Exception:
+                try:
+                    self.ctx.log.warning("任务最终消息发送失败")
+                except Exception:
+                    pass
             return
-        if not final:
-            self.count += 1
+        if self.official:
+            self._batch.append(str(text))
+            if len(self._batch) >= OFFICIAL_BATCH_LINES:
+                await self._flush_progress()
+            return
+        if self.count >= MAX_PROGRESS_MESSAGES:
+            return
+        self.count += 1
         try:
             await self.ctx.reply(self.event, text)
+        except Exception:
+            pass
+
+    async def _flush_progress(self) -> None:
+        """官方通道：把缓冲的进度行合并成一条，最多 OFFICIAL_PROGRESS_BUDGET 条。"""
+        if not self._batch:
+            return
+        if self._batches >= OFFICIAL_PROGRESS_BUDGET:
+            # 预算用完：不再发中间进度，保证最终结果一定能发出去
+            self._batch.clear()
+            return
+        text = "\n".join(self._batch).strip()
+        self._batch.clear()
+        self._batches += 1
+        if not text:
+            return
+        try:
+            await self.ctx.reply(self.event, text[:OFFICIAL_BATCH_CHARS])
         except Exception:
             pass
 

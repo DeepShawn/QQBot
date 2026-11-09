@@ -192,6 +192,8 @@ def _image_upload_body(segment: dict, file_type: int) -> dict:
 class OfficialClient:
     """官方 QQ 机器人 WebSocket 客户端（接口与 OneBotClient 兼容）。"""
 
+    kind = "official"
+
     def __init__(
         self,
         app_id: str,

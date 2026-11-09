@@ -13,6 +13,8 @@ class OneBotError(RuntimeError):
 
 
 class OneBotClient:
+    kind = "onebot"
+
     def __init__(
         self,
         url: str,
