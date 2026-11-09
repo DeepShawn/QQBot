@@ -32,13 +32,18 @@ import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 
-/** 主题色选择页：10 个强调色预设，点击立即写入 config `ui.accent` 并全局生效。 */
+private val THEME_IDS = listOf("dark", "light", "system")
+private val THEME_LABELS = listOf("深色（默认）", "浅色", "跟随系统")
+
+/** 主题色选择页：外观模式（深/浅/跟随系统）+ 强调色预设，点击立即写入 config 并全局生效。 */
 @Composable
 fun ThemePage(padding: PaddingValues, scrollBehavior: ScrollBehavior, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val currentId = Store.str("config", "ui", "accent")
     val current = accentById(currentId)
+    val themeMode = Store.str("config", "ui", "theme").ifBlank { "dark" }
 
     BackHandler { onBack() }
 
@@ -99,6 +104,24 @@ fun ThemePage(padding: PaddingValues, scrollBehavior: ScrollBehavior, onBack: ()
                     }
                 }
             }
+        }
+
+        group("外观") {
+            OverlayDropdownPreference(
+                title = "外观模式",
+                summary = THEME_LABELS[THEME_IDS.indexOf(themeMode).coerceAtLeast(0)],
+                items = THEME_LABELS,
+                selectedIndex = THEME_IDS.indexOf(themeMode).coerceAtLeast(0),
+                onSelectedIndexChange = { i ->
+                    scope.launch {
+                        Store.patch(
+                            patchOf("ui", "theme", value = THEME_IDS[i]),
+                            "外观已切换为「${THEME_LABELS[i]}」",
+                        )
+                    }
+                },
+            )
+            Hint("浅色模式使用白系玻璃 + 深色文字；「跟随系统」跟随手机的深色模式开关。")
         }
 
         group("主题色") {

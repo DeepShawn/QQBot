@@ -1,6 +1,13 @@
 package com.qqbot.console.ui
 
+import android.provider.Settings
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,8 +29,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -38,32 +49,36 @@ import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 
-// ============================================================ Design tokens（深色 · 液态玻璃）
+// ============================================================ Design tokens（深/浅两套 · 液态玻璃）
 
 /** 语义色（强调色由 LocalAccent/Accent.kt 提供，可切换）。 */
-val GlassSuccess = Color(0xFF30D158)
-val GlassWarning = Color(0xFFFF9F0A)
-val GlassDanger = Color(0xFFFF453A)
-val GlassInfo = Color(0xFF64D2FF)
-val GlassNeutral = Color(0xFF8E8E93)
+val GlassSuccess: Color get() = GlassTokens.success
+val GlassWarning: Color get() = GlassTokens.warning
+val GlassDanger: Color get() = GlassTokens.danger
+val GlassInfo: Color get() = GlassTokens.info
+val GlassNeutral: Color get() = GlassTokens.neutral
 
-/** 文字 / 分隔。 */
+/** 文字 / 分隔。随明暗主题自动切换。 */
 object GlassText {
-    val primary = Color(0xFFF5F2F5FA)
-    val secondary = Color(0xA3FFFFFF)
-    val tertiary = Color(0x66FFFFFF)
-    val disabled = Color(0x47FFFFFF)
-    val divider = Color(0x14FFFFFF)
-    val dim = Color(0x8C05070C)
-    val mono = Color(0xFFD9E6EAF2)
+    val primary get() = if (GlassTokens.dark) Color(0xFFF5F2F5FA) else Color(0xFF0B0F1A)
+    val secondary get() = if (GlassTokens.dark) Color(0xA3FFFFFF) else Color(0xB30B0F1A)
+    val tertiary get() = if (GlassTokens.dark) Color(0x66FFFFFF) else Color(0x800B0F1A)
+    val disabled get() = if (GlassTokens.dark) Color(0x47FFFFFF) else Color(0x470B0F1A)
+    val divider get() = if (GlassTokens.dark) Color(0x14FFFFFF) else Color(0x140B0F1A)
+    val dim get() = if (GlassTokens.dark) Color(0x8C05070C) else Color(0x4D1B2340)
+    val mono get() = if (GlassTokens.dark) Color(0xFFD9E6EAF2) else Color(0xFF1B2340)
 }
 
 /** 圆角 / 间距。 */
@@ -88,53 +103,82 @@ data class GlassSpec(
 )
 
 object GlassTokens {
-    // 背景（L0）
-    val bgTop = Color(0xFF0A0D14)
-    val bgMid = Color(0xFF0B0F1A)
-    val bgBottom = Color(0xFF07090F)
+    /**
+     * 当前是否深色主题。MainActivity 依据 config `ui.theme` 写入；
+     * 所有 token 都是 getter，切换主题会立即使读取它们的 Compose 组件重组。
+     */
+    var dark by mutableStateOf(true)
 
-    // 材质填充
-    val thinFill = Color(0x0FFFFFFF)          // 6% 白
-    val regularFill = Color(0x17FFFFFF)       // 9% 白
-    val thickFill = Color(0xC71A1F2B)         // 78% 深蓝灰
-    val thickFallback = Color(0xE6151924)     // 90%
-    val overlayFill = Color(0xE0141824)       // 88%
-    val overlayFallback = Color(0xF2121621)   // 95%
-    val inkFill = Color(0xF00A0D14)           // 94% 实底
-    val insetFill = Color(0x38000000)         // 22% 黑
-    val accentFill = Color(0x295B8CFF)        // 强调 16%
-    val accentSoft = Color(0x1F5B8CFF)
+    // ---------- 语义色 ----------
+    val success get() = if (dark) Color(0xFF30D158) else Color(0xFF1E9E4A)
+    val warning get() = if (dark) Color(0xFFFF9F0A) else Color(0xFFC77700)
+    val danger get() = if (dark) Color(0xFFFF453A) else Color(0xFFE5352B)
+    val info get() = if (dark) Color(0xFF64D2FF) else Color(0xFF0A84C6)
+    val neutral get() = if (dark) Color(0xFF8E8E93) else Color(0xFF6E6E73)
 
-    val thinRim = listOf(
-        0f to Color(0x3DFFFFFF),
-        0.55f to Color(0x0AFFFFFF),
-        1f to Color(0x1FFFFFFF),
-    )
-    val regularRim = listOf(
-        0f to Color(0x4DFFFFFF),
-        0.55f to Color(0x0FFFFFFF),
-        1f to Color(0x24FFFFFF),
-    )
-    val thickRim = listOf(
-        0f to Color(0x66FFFFFF),
-        0.55f to Color(0x14FFFFFF),
-        1f to Color(0x33FFFFFF),
-    )
-    val overlayRim = listOf(
-        0f to Color(0x59FFFFFF),
-        0.55f to Color(0x0FFFFFFF),
-        1f to Color(0x29FFFFFF),
-    )
-    val inkRim = listOf(0f to Color(0x14FFFFFF), 1f to Color(0x14FFFFFF))
-    val insetRim = listOf(0f to Color(0x14FFFFFF), 1f to Color(0x14FFFFFF))
+    // ---------- 背景（L0） ----------
+    val bgTop get() = if (dark) Color(0xFF0A0D14) else Color(0xFFF3F5F9)
+    val bgMid get() = if (dark) Color(0xFF0B0F1A) else Color(0xFFEAEEF5)
+    val bgBottom get() = if (dark) Color(0xFF07090F) else Color(0xFFE6EAF2)
 
-    fun spec(level: GlassLevel): GlassSpec = when (level) {
-        GlassLevel.Thin -> GlassSpec(thinFill, 0.05f, thinRim, false, 0.dp, Color.Transparent)
-        GlassLevel.Regular -> GlassSpec(regularFill, 0.08f, regularRim, false, 0.dp, Color.Transparent)
-        GlassLevel.Thick -> GlassSpec(thickFill, 0.10f, thickRim, true, 16.dp, Color(0x99000000))
-        GlassLevel.Overlay -> GlassSpec(overlayFill, 0.08f, overlayRim, true, 24.dp, Color(0xB3000000))
-        GlassLevel.Ink -> GlassSpec(inkFill, 0f, inkRim, false, 0.dp, Color.Transparent)
-        GlassLevel.Inset -> GlassSpec(insetFill, 0f, insetRim, false, 0.dp, Color.Transparent)
+    // ---------- 材质填充 ----------
+    val thinFill get() = if (dark) Color(0x0FFFFFFF) else Color(0x9EFFFFFF)       // 6% / 62%
+    val regularFill get() = if (dark) Color(0x17FFFFFF) else Color(0xB8FFFFFF)    // 9% / 72%
+    val thickFill get() = if (dark) Color(0xC71A1F2B) else Color(0xD9F7F8FB)      // 78% / 85%
+    val thickFallback get() = if (dark) Color(0xE6151924) else Color(0xE8F7F8FB)
+    val overlayFill get() = if (dark) Color(0xE0141824) else Color(0xEBF8F9FC)    // 88% / 92%
+    val overlayFallback get() = if (dark) Color(0xF2121621) else Color(0xF5F8F9FC)
+    val inkFill get() = if (dark) Color(0xF00A0D14) else Color(0xF5FFFFFF)       // 实底
+    val insetFill get() = if (dark) Color(0x38000000) else Color(0x0F0B0F1A)     // 内凹
+    val inkBorder get() = if (dark) Color(0x14FFFFFF) else Color(0x140B0F1A)
+    val accentFill get() = Color(0x295B8CFF)
+    val accentSoft get() = Color(0x1F5B8CFF)
+
+    // ---------- 描边（1dp，135° 三段） ----------
+    val thinRim get() = if (dark) {
+        listOf(0f to Color(0x3DFFFFFF), 0.55f to Color(0x0AFFFFFF), 1f to Color(0x1FFFFFFF))
+    } else {
+        listOf(0f to Color(0xE6FFFFFF), 0.55f to Color(0x4DFFFFFF), 1f to Color(0x99FFFFFF))
+    }
+    val regularRim get() = if (dark) {
+        listOf(0f to Color(0x4DFFFFFF), 0.55f to Color(0x0FFFFFFF), 1f to Color(0x24FFFFFF))
+    } else {
+        listOf(0f to Color(0xE6FFFFFF), 0.55f to Color(0x4DFFFFFF), 1f to Color(0x99FFFFFF))
+    }
+    val thickRim get() = if (dark) {
+        listOf(0f to Color(0x66FFFFFF), 0.55f to Color(0x14FFFFFF), 1f to Color(0x33FFFFFF))
+    } else {
+        listOf(0f to Color(0xE6FFFFFF), 0.55f to Color(0x4DFFFFFF), 1f to Color(0x99FFFFFF))
+    }
+    val overlayRim get() = if (dark) {
+        listOf(0f to Color(0x59FFFFFF), 0.55f to Color(0x0FFFFFFF), 1f to Color(0x29FFFFFF))
+    } else {
+        listOf(0f to Color(0xE6FFFFFF), 0.55f to Color(0x4DFFFFFF), 1f to Color(0x99FFFFFF))
+    }
+    val inkRim get() = listOf(0f to inkBorder, 1f to inkBorder)
+    val insetRim get() = listOf(0f to inkBorder, 1f to inkBorder)
+
+    // ---------- 浮层阴影 ----------
+    val shadowAmbient get() = if (dark) Color(0x33000000) else Color(0x0F1B2340)
+    val shadowSpot get() = if (dark) Color(0x99000000) else Color(0x1F1B2340)
+
+    // ---------- 背景光斑（暗 / 浅两套） ----------
+    val blobB get() = if (dark) Color(0x292BD4C8) else Color(0x2E5FE3D6)
+    val blobC get() = if (dark) Color(0x2EA15BFF) else Color(0x2EC79BFF)
+    val blobD get() = if (dark) Color(0x14FF7A59) else Color(0x24FFB59A)
+    val vignette get() = if (dark) Color(0x59000000) else Color.Transparent
+    val lightTopSheen get() = if (dark) Color.Transparent else Color(0x14FFFFFF)
+
+    fun spec(level: GlassLevel): GlassSpec {
+        val spot = if (dark) Color(0x99000000) else Color(0x1F1B2340)
+        return when (level) {
+            GlassLevel.Thin -> GlassSpec(thinFill, 0.05f, thinRim, false, 0.dp, Color.Transparent)
+            GlassLevel.Regular -> GlassSpec(regularFill, 0.08f, regularRim, false, 0.dp, Color.Transparent)
+            GlassLevel.Thick -> GlassSpec(thickFill, 0.10f, thickRim, true, 16.dp, spot)
+            GlassLevel.Overlay -> GlassSpec(overlayFill, 0.08f, overlayRim, true, 24.dp, spot)
+            GlassLevel.Ink -> GlassSpec(inkFill, 0f, inkRim, false, 0.dp, Color.Transparent)
+            GlassLevel.Inset -> GlassSpec(insetFill, 0f, insetRim, false, 0.dp, Color.Transparent)
+        }
     }
 }
 
@@ -193,22 +237,61 @@ fun Modifier.glass(
 
 // ============================================================ 背景（L0）
 
-/** 深色底 + 4 团径向光斑 + 暗角；整页静态绘制（drawWithCache 缓存 Brush）。 */
+/** 4 团光斑的基准位置 / 半径 / 漂移幅度 / 相位（不同相位避免同步移动）。 */
+private val BackdropBlobs = listOf(
+    floatArrayOf(0.12f, 0.06f, 0.95f, 0.030f, 0.00f),  // 冰蓝（强调色）
+    floatArrayOf(0.98f, 0.38f, 0.80f, 0.025f, 0.33f),  // 青
+    floatArrayOf(0.18f, 0.80f, 1.00f, 0.030f, 0.66f),  // 紫
+    floatArrayOf(0.88f, 1.02f, 0.70f, 0.020f, 0.15f),  // 暖
+)
+
+/**
+ * 深/浅色底 + 4 团径向光斑 +（暗色）暗角。
+ * 光斑缓慢漂移 + 轻微呼吸（约 19–30 秒一轮）；系统关闭动画时保持静态。
+ * 只在 Root 层画一次；整屏绘制，不随滚动重算。
+ */
 @Composable
 fun GlassBackdrop(modifier: Modifier = Modifier) {
+    val ctx = LocalContext.current
     val accent = LocalAccent.current
+    val dark = GlassTokens.dark
+
+    // 尊重系统「动画时长缩放 = 0」（移除动画）
+    val animationsEnabled = remember(ctx) {
+        try {
+            Settings.Global.getFloat(ctx.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
+        } catch (_: Exception) {
+            true
+        }
+    }
+    val transition = rememberInfiniteTransition(label = "glassBackdrop")
+    val driftState: State<Float> = if (animationsEnabled) {
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(30000, easing = LinearEasing)),
+            label = "glassDrift",
+        )
+    } else {
+        remember { mutableFloatStateOf(0.25f) }
+    }
+    val breathState: State<Float> = if (animationsEnabled) {
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(19000, easing = LinearEasing), RepeatMode.Reverse),
+            label = "glassBreath",
+        )
+    } else {
+        remember { mutableFloatStateOf(0.5f) }
+    }
+
     Spacer(
         modifier
             .fillMaxSize()
             .drawWithCache {
                 val w = size.width
                 val h = size.height
-                val r = minOf(w, h).coerceAtLeast(1f)
-                fun blob(c: Color, x: Float, y: Float, k: Float): Brush = Brush.radialGradient(
-                    colors = listOf(c, c.copy(alpha = 0f)),
-                    center = Offset(w * x, h * y),
-                    radius = r * k,
-                )
                 val base = Brush.verticalGradient(
                     colorStops = arrayOf(
                         0f to GlassTokens.bgTop,
@@ -216,21 +299,41 @@ fun GlassBackdrop(modifier: Modifier = Modifier) {
                         1f to GlassTokens.bgBottom,
                     ),
                 )
-                val blobs = listOf(
-                    blob(accent.blob, 0.12f, 0.06f, 0.95f),
-                    blob(Color(0x292BD4C8), 0.98f, 0.38f, 0.80f),
-                    blob(Color(0x2EA15BFF), 0.18f, 0.80f, 1.00f),
-                    blob(Color(0x14FF7A59), 0.88f, 1.02f, 0.70f),
-                )
-                val vignette = Brush.radialGradient(
-                    colorStops = arrayOf(0.55f to Color.Transparent, 1f to Color(0x59000000)),
-                    center = Offset(w / 2f, h * 0.45f),
-                    radius = maxOf(w, h) * 1.1f,
-                )
+                val vignette = if (dark) {
+                    Brush.radialGradient(
+                        colorStops = arrayOf(0.55f to Color.Transparent, 1f to GlassTokens.vignette),
+                        center = Offset(w / 2f, h * 0.45f),
+                        radius = maxOf(w, h) * 1.1f,
+                    )
+                } else null
+                val topSheen = if (!dark) {
+                    Brush.verticalGradient(0f to GlassTokens.lightTopSheen, 0.5f to Color.Transparent)
+                } else null
+                val accentBlob = if (dark) accent.blob else accent.primary.copy(alpha = 0.22f)
+                val blobColors = listOf(accentBlob, GlassTokens.blobB, GlassTokens.blobC, GlassTokens.blobD)
+
                 onDrawBehind {
                     drawRect(base)
-                    blobs.forEach { drawRect(it) }
-                    drawRect(vignette)
+                    // 动画状态只在 draw 阶段读，不触发整页重组
+                    val t = driftState.value
+                    val breath = 0.5f + (breathState.value - 0.5f) * 0.10f
+                    val wd = size.width
+                    val hd = size.height
+                    val r = minOf(wd, hd).coerceAtLeast(1f)
+                    BackdropBlobs.forEachIndexed { i, b ->
+                        val angle = (t + b[4]) * 2f * PI.toFloat()
+                        val dx = sin(angle) * b[3] * wd
+                        val dy = cos(angle * 0.8f) * b[3] * 0.7f * hd
+                        val color = blobColors[i]
+                        val brush = Brush.radialGradient(
+                            colors = listOf(color, color.copy(alpha = 0f)),
+                            center = Offset(wd * b[0] + dx, hd * b[1] + dy),
+                            radius = (r * b[2] * (1f + (breath - 0.5f) * 0.10f)).coerceAtLeast(1f),
+                        )
+                        drawRect(brush)
+                    }
+                    topSheen?.let { drawRect(it) }
+                    vignette?.let { drawRect(it) }
                 }
             },
     )
@@ -359,7 +462,7 @@ fun GlassTabBar(
         modifier = modifier
             .fillMaxWidth()
             .height(64.dp)
-            .shadow(16.dp, shape, ambientColor = Color(0x33000000), spotColor = Color(0x99000000))
+            .shadow(16.dp, shape, ambientColor = GlassTokens.shadowAmbient, spotColor = GlassTokens.shadowSpot)
             .glass(GlassLevel.Thick, shape)
             .padding(6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -367,7 +470,7 @@ fun GlassTabBar(
     ) {
         items.forEachIndexed { i, item ->
             val selected = i == selectedIndex
-            val tint = if (selected) accent.onGlass else Color(0x99FFFFFF)
+            val tint = if (selected) (if (GlassTokens.dark) accent.onGlass else accent.primary) else GlassText.secondary
             val interaction = remember(i) { MutableInteractionSource() }
             val pressed by interaction.collectIsPressedAsState()
             val scale by animateFloatAsState(if (pressed) 0.92f else 1f, label = "glassTabScale")
@@ -417,7 +520,7 @@ fun InkBox(
         modifier
             .clip(shape)
             .background(GlassTokens.inkFill)
-            .border(1.dp, Color(0x14FFFFFF), shape),
+            .border(1.dp, GlassTokens.inkBorder, shape),
         content = content,
     )
 }

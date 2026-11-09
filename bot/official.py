@@ -40,8 +40,73 @@ MAX_MSG_SEQ = 5
 RETRY_429_SLEEP = 1.0
 MAX_WS_SIZE = 2 ** 24
 STATE_FILE_NAME = "official_ids.json"
+NAMES_FILE_NAME = "official_names.json"
 
-__all__ = ["OfficialError", "OfficialClient"]
+__all__ = [
+    "OfficialError",
+    "OfficialClient",
+    "load_names",
+    "get_nickname",
+    "set_nickname",
+    "names_path",
+]
+
+_names_lock = threading.RLock()
+
+
+def names_path(data_dir=None) -> Path:
+    """official_names.json：openid -> 用户自己设置的昵称。"""
+    base = (
+        Path(data_dir)
+        if data_dir is not None
+        else (Path(__file__).resolve().parent / "data")
+    )
+    return base / NAMES_FILE_NAME
+
+
+def load_names(data_dir=None) -> dict[str, str]:
+    path = names_path(data_dir)
+    with _names_lock:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    items = data.get("names") if isinstance(data, dict) else None
+    if not isinstance(items, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key, value in items.items():
+        openid = str(key or "").strip()
+        name = str(value or "").strip()
+        if openid and name:
+            result[openid] = name
+    return result
+
+
+def get_nickname(data_dir, openid) -> str:
+    openid = str(openid or "").strip()
+    if not openid:
+        return ""
+    return load_names(data_dir).get(openid, "")
+
+
+def set_nickname(data_dir, openid, name) -> str:
+    openid = str(openid or "").strip()
+    name = str(name or "").strip()
+    if not openid or not name:
+        raise ValueError("openid 或名字为空")
+    path = names_path(data_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _names_lock:
+        names = load_names(data_dir)
+        names[openid] = name[:24]
+        body = json.dumps(
+            {"version": 1, "names": names}, ensure_ascii=False
+        )
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(body, encoding="utf-8")
+        tmp.replace(path)
+    return names[openid]
 
 
 class OfficialError(RuntimeError):
@@ -228,7 +293,8 @@ class OfficialClient:
         data_path = (
             Path(data_dir) if data_dir is not None else (Path(__file__).resolve().parent / "data")
         )
-        self._ids = _IdMap(Path(data_path) / STATE_FILE_NAME)
+        self._data_dir = Path(data_path)
+        self._ids = _IdMap(self._data_dir / STATE_FILE_NAME)
 
     # ---------- 属性 ----------
     @property
@@ -510,6 +576,25 @@ class OfficialClient:
         self.log.info("官方群消息 @机器人=%s mentions=%s", hit, summary)
         return hit, mark_ids
 
+    @staticmethod
+    def _attachment_images(data: dict) -> list[dict]:
+        """attachments 里的图片 -> image segment（data.file/url 都是图片地址）。"""
+        segments: list[dict] = []
+        attachments = data.get("attachments")
+        if not isinstance(attachments, list):
+            return segments
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if not url.startswith(("http://", "https://")):
+                continue
+            mime = str(item.get("content_type") or "").lower()
+            if mime and not mime.startswith("image"):
+                continue
+            segments.append({"type": "image", "data": {"file": url, "url": url}})
+        return segments
+
     # ---------- 事件翻译 ----------
     def _translate_event(self, event_type: str, data: dict) -> dict | None:
         if not isinstance(data, dict):
@@ -546,10 +631,15 @@ class OfficialClient:
                         "user_id": user_id,
                         "group_id": group_id,
                         "message_id": msg_id,
-                        "message": [{"type": "text", "data": {"text": content}}],
+                        "message": [{"type": "text", "data": {"text": content}}]
+                        + self._attachment_images(data),
                         "raw_message": content,
                         "time": timestamp,
-                        "sender": {"user_id": user_id, "nickname": "群友"},
+                        "sender": {
+                            "user_id": user_id,
+                            "nickname": get_nickname(self._data_dir, member_openid)
+                            or "群友",
+                        },
                         "_official": {
                             "kind": "group",
                             "group_openid": group_openid,
@@ -574,10 +664,15 @@ class OfficialClient:
                     # 让插件里的 mentioned()/strip_at() 按 OneBot 习惯正常工作
                     {"type": "at", "data": {"qq": str(self.self_id)}},
                     {"type": "text", "data": {"text": content}},
-                ],
+                ]
+                + self._attachment_images(data),
                 "raw_message": content,
                 "time": timestamp,
-                "sender": {"user_id": user_id, "nickname": "群友"},
+                "sender": {
+                    "user_id": user_id,
+                    "nickname": get_nickname(self._data_dir, member_openid)
+                    or "群友",
+                },
                 "_official": {
                     "kind": "group",
                     "group_openid": group_openid,
@@ -593,18 +688,7 @@ class OfficialClient:
                 return None
             user_id = self._ids.get("user", user_openid)
             segments = [{"type": "text", "data": {"text": content}}]
-            attachments = data.get("attachments")
-            if isinstance(attachments, list):
-                for item in attachments:
-                    if not isinstance(item, dict):
-                        continue
-                    url = str(item.get("url") or "").strip()
-                    if not url.startswith(("http://", "https://")):
-                        continue
-                    mime = str(item.get("content_type") or "").lower()
-                    if mime and not mime.startswith("image/") and not mime.startswith("image"):
-                        continue
-                    segments.append({"type": "image", "data": {"file": url, "url": url}})
+            segments += self._attachment_images(data)
             self._remember_context("c2c", user_openid, msg_id, C2C_CONTEXT_SECONDS)
             return {
                 "post_type": "message",
@@ -615,7 +699,10 @@ class OfficialClient:
                 "message": segments,
                 "raw_message": content,
                 "time": timestamp,
-                "sender": {"user_id": user_id, "nickname": "朋友"},
+                "sender": {
+                    "user_id": user_id,
+                    "nickname": get_nickname(self._data_dir, user_openid) or "朋友",
+                },
                 "_official": {
                     "kind": "c2c",
                     "user_openid": user_openid,

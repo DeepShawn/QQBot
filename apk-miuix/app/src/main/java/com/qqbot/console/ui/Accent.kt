@@ -38,6 +38,8 @@ val AccentPresets = listOf(
     AccentPreset("sunset", "晚霞", Color(0xFFFF6B6B), Color(0xFFFFA94D)),
     AccentPreset("graphite", "石墨", Color(0xFFA0AEC0), Color(0xFF718096)),
     AccentPreset("forest", "森林", Color(0xFF34D399), Color(0xFF059669)),
+    AccentPreset("indigo", "靛蓝", Color(0xFF6366F1), Color(0xFF818CF8)),
+    AccentPreset("peach", "蜜桃", Color(0xFFFB923C), Color(0xFFFCA5A5)),
 )
 
 /** 按 id 取主题色；未知 / 空 → 冰蓝（默认）。 */

@@ -267,7 +267,8 @@ class Plugin(PluginBase):
         auth 为空串表示用 API Key；非空是账号 id（chatgpt/claude/gemini/deepseek）。
         账号模式下 model 只看当前 profile，空串表示用该账号的默认模型。
         """
-        cfg = dict(self.ctx.plugin_cfg("ai_chat"))
+        top_cfg = self.ctx.plugin_cfg("ai_chat")
+        cfg = dict(top_cfg)
         profiles = [p for p in (cfg.get("profiles") or []) if isinstance(p, dict)]
         active = str(cfg.get("active_profile") or "")
         prof = next((p for p in profiles if str(p.get("id")) == active), None)
@@ -287,6 +288,8 @@ class Plugin(PluginBase):
             if cfg.get("auth"):
                 cfg["model"] = str(prof.get("model") or "").strip()
         cfg["auth"] = str(cfg.get("auth") or "").strip()
+        # 人格提示词只认顶层：profile 只覆盖接口字段，不能让 system_prompt 变空
+        cfg["system_prompt"] = str(top_cfg.get("system_prompt") or "").strip()
         return cfg
 
     # ---------------- 触发判断 ----------------
@@ -1497,6 +1500,22 @@ class Plugin(PluginBase):
             )
         if hints:
             system = (str(system).rstrip() + "\n\n" + "\n\n".join(hints)).strip()
+        official_meta = event.get("_official") or {}
+        if (
+            event.get("message_type") == "group"
+            and isinstance(official_meta, dict)
+            and official_meta.get("kind") == "group"
+        ):
+            try:
+                self.ctx.log.info(
+                    "AI 官方群触发 group_openid=%s addressed=%s system_prompt_len=%d",
+                    official_meta.get("group_openid") or "",
+                    mentioned(event.get("message"), self.ctx.self_id),
+                    len(str(system or "")),
+                )
+            except Exception:
+                pass
+
         history_messages = self._history(key)
         messages = [{"role": "system", "content": system}] + history_messages
 

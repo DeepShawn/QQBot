@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import agent
+import official
 import quota_refresh
 from dispatcher import PluginBase
 from utils import mentioned, strip_at, text_of
@@ -32,6 +33,7 @@ class Plugin(PluginBase):
             "/model": self.cmd_model,
             "/task": self.cmd_task,
             "/刷新限额": self.cmd_refresh_quota,
+            "/我叫": self.cmd_set_name,
         }
 
     # ---------- 读写原始 config.json（原子替换，避免和热加载打架） ----------
@@ -76,7 +78,8 @@ class Plugin(PluginBase):
             if not await agent.can_use(self.ctx, event):
                 await self.ctx.reply(event, "这条命令只有管理员能用。")
                 return True
-        elif not self.ctx.is_admin(event.get("user_id")):
+        elif cmd != "/我叫" and not self.ctx.is_admin(event.get("user_id")):
+            # /我叫 是任何成员都能用的名字绑定，不做管理员门
             await self.ctx.reply(event, "这条命令只有管理员能用。")
             return True
         await handler(event, text.split()[1:])
@@ -271,6 +274,39 @@ class Plugin(PluginBase):
 
         task.add_done_callback(_cleanup)
 
+    # ---------- /我叫 ----------
+    async def cmd_set_name(self, event, args):
+        """官方通道里绑定/修改自己的昵称（任何成员可用）。"""
+        name = " ".join(str(item) for item in (args or [])).strip()
+        if not name:
+            await self.ctx.reply(event, "用法：/我叫 <名字>（1-24 个字符）")
+            return
+        if len(name) > 24:
+            await self.ctx.reply(event, "名字太长了，最多 24 个字符。")
+            return
+        if any(ch in name for ch in "\r\n\t"):
+            await self.ctx.reply(event, "名字里不能有换行/制表符。")
+            return
+        official_meta = event.get("_official") or {}
+        kind = str(official_meta.get("kind") or "") if isinstance(official_meta, dict) else ""
+        openid = ""
+        if kind == "group":
+            openid = str(official_meta.get("member_openid") or "")
+        elif kind == "c2c":
+            openid = str(official_meta.get("user_openid") or "")
+        if not openid:
+            await self.ctx.reply(
+                event, "当前不是官方 QQ 机器人通道，不需要绑定名字。"
+            )
+            return
+        try:
+            saved = official.set_nickname(self.ctx.data_dir, openid, name)
+        except Exception as e:
+            self.ctx.log.warning("保存昵称失败: %s", e)
+            await self.ctx.reply(event, "保存名字失败了，稍后再试。")
+            return
+        await self.ctx.reply(event, f"✅ 好的，以后叫你「{saved}」")
+
     # ---------- /刷新限额 ----------
     async def cmd_refresh_quota(self, event, args):
         """立即刷新 Claude/ChatGPT 的 5 小时限额（内部发你好，不往 QQ 发消息）。"""
@@ -311,6 +347,7 @@ class Plugin(PluginBase):
             "/task <需求> 长任务（实时汇报进度，缺环境自动安装）\n"
             "/task stop 停止当前长任务\n"
             "/刷新限额 立即刷新 Claude/ChatGPT 的 5 小时限额\n"
+            "/我叫 <名字> 绑定官方通道里怎么称呼你\n"
             "/ping 延迟测试\n"
             "/reload 重载 config.json\n"
             "/help 本说明",

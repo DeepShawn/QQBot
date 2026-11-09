@@ -13,6 +13,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +31,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -100,10 +102,30 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {
         }
         setContent {
-            // 液态玻璃：全局深色优先；强调色来自 config `ui.accent`（可在「更多 → 主题色」切换）
+            // 强调色 + 外观模式（dark / light / system）都来自 config `ui.*`，切换即时生效
             val accent = accentById(Store.str("config", "ui", "accent"))
-            val controller = remember(accent.id) {
-                ThemeController(ColorSchemeMode.Dark, keyColor = accent.primary)
+            val themeMode = Store.str("config", "ui", "theme").ifBlank { "dark" }
+            val systemDark = isSystemInDarkTheme()
+            val dark = when (themeMode) {
+                "light" -> false
+                "system" -> systemDark
+                else -> true   // dark（默认）
+            }
+            // 玻璃 tokens 是全局单例（getter 读取 dark），这里同步主题并让状态栏图标颜色跟随
+            SideEffect { GlassTokens.dark = dark }
+            SideEffect {
+                try {
+                    val insets = WindowCompat.getInsetsController(window, window.decorView)
+                    insets.isAppearanceLightStatusBars = !dark
+                    insets.isAppearanceLightNavigationBars = !dark
+                } catch (_: Exception) {
+                }
+            }
+            val controller = remember(accent.id, dark) {
+                ThemeController(
+                    if (dark) ColorSchemeMode.Dark else ColorSchemeMode.Light,
+                    keyColor = accent.primary,
+                )
             }
             // MIUIX 的弹窗 / 下拉用 navigationevent 处理返回手势，必须能拿到 dispatcher，否则一弹就闪退；
             // 关掉 squircle，避免 MIUIX 的圆角与玻璃渐变描边在角部错位

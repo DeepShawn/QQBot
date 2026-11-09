@@ -245,6 +245,7 @@
   },
   "ai_chat": {},
   "ui": {
-    "accent": "ice"
+    "accent": "ice",
+    "theme": "dark"
   }
 }

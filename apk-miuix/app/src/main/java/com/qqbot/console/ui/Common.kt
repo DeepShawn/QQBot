@@ -46,9 +46,9 @@ import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.utils.overScrollVertical
 
-val Good = GlassSuccess
-val Warn = GlassWarning
-val Bad = GlassDanger
+val Good: Color get() = GlassSuccess
+val Warn: Color get() = GlassWarning
+val Bad: Color get() = GlassDanger
 
 /** 带 MIUI 回弹 + 折叠大标题联动的页面列表。 */
 @Composable
