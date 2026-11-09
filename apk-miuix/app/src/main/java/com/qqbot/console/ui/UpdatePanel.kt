@@ -36,7 +36,7 @@ fun UpdatePromptHost() {
 
     OverlayDialog(
         show = AppUpdates.prompt,
-        title = "发现新版本 ${info.version}",
+        title = "发现新版本 ${info.version}" + (if (info.isLocal) "（本地）" else ""),
         onDismissRequest = { if (!AppUpdates.downloading) AppUpdates.prompt = false },
     ) {
         Column(Modifier.fillMaxWidth()) {
@@ -52,6 +52,14 @@ fun UpdatePromptHost() {
                 Spacer(Modifier.height(10.dp))
                 LinearProgressIndicator(progress = AppUpdates.progress, modifier = Modifier.fillMaxWidth())
             } else {
+                if (info.isLocal) {
+                    Text(
+                        "本地更新包：不联网，直接从手机存储安装。",
+                        fontSize = 13.sp,
+                        color = Good,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 Text("更新说明", fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(6.dp))
                 Column(
@@ -79,7 +87,11 @@ fun UpdatePromptHost() {
                     modifier = Modifier.weight(1f),
                 )
                 TextButton(
-                    text = if (AppUpdates.downloading) "正在下载…" else "立即更新",
+                    text = when {
+                        AppUpdates.downloading -> "处理中…"
+                        info.isLocal -> "立即安装"
+                        else -> "立即更新"
+                    },
                     onClick = { scope.launch { AppUpdates.downloadAndInstall(ctx) } },
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.textButtonColorsPrimary(),

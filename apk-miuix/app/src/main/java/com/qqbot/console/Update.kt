@@ -3,6 +3,7 @@ package com.qqbot.console
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Environment
 import android.provider.Settings
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,9 +27,14 @@ data class AppRelease(
     val notes: String,          // release body（更新说明，可能是 markdown 原文）
     val apkUrl: String,
     val apkName: String,
-    val sumsUrl: String,        // SHA256SUMS-*.txt
+    val sumsUrl: String,        // SHA256SUMS-*.txt（本地更新时为空）
     val size: Long,
-)
+    val localApkPath: String = "",   // 本地离线更新包路径（非空 = 本地更新）
+    val localSha256: String = "",    // update.json 里可选的 sha256
+) {
+    /** 是否为本地（手机存储）更新包。 */
+    val isLocal: Boolean get() = localApkPath.isNotBlank()
+}
 
 /** 一次检查的结果：release 为新版本时非空；error 非空表示检查失败；都为空表示已是最新。 */
 data class UpdateCheck(
@@ -42,6 +48,9 @@ object AppUpdates {
     private const val LATEST_URL = "https://api.github.com/repos/$REPO/releases/latest"
     private const val RELEASES_LATEST = "https://github.com/$REPO/releases/latest"
     private const val UA = "QQBot-Console-Android"
+
+    private const val LOCAL_DIR = "DSH-Go"
+    private const val LOCAL_JSON = "update.json"
 
     private const val PREFS = "qqbot_update"
     private const val KEY_AUTO = "auto_check"
@@ -124,7 +133,61 @@ object AppUpdates {
 
     // ---------- 检查 ----------
 
+    /** 本地更新源目录：优先标准公共下载目录，再兜底 /sdcard/Download。 */
+    private fun localUpdateDirs(): List<File> {
+        val dirs = ArrayList<File>(2)
+        try {
+            @Suppress("DEPRECATION")
+            val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            dirs += File(downloads, LOCAL_DIR)
+        } catch (_: Exception) {
+        }
+        val sdcard = File("/sdcard/Download/$LOCAL_DIR")
+        if (dirs.none { it.absolutePath == sdcard.absolutePath }) dirs += sdcard
+        return dirs
+    }
+
+    /**
+     * 本地离线更新：读 Download/DSH-Go/update.json（version/apk/sha256/notes），
+     * 版本比当前新且 APK 存在时返回；任何异常/缺失 → null（交由 GitHub 兜底）。
+     */
+    private fun checkLocal(): UpdateCheck? {
+        for (dir in localUpdateDirs()) {
+            val jsonFile = File(dir, LOCAL_JSON)
+            if (!jsonFile.isFile) continue
+            val root = try {
+                JSONObject(jsonFile.readText())
+            } catch (_: Exception) {
+                continue
+            }
+            val version = root.optString("version").trim().trimStart('v', 'V').trim()
+            if (version.isBlank()) continue
+            if (compareVersions(version, currentVersion) <= 0) return null
+            val apkName = root.optString("apk").trim().ifBlank { "QQBot-Console-$version.apk" }
+            val apkFile = File(dir, apkName)
+            if (!apkFile.isFile) continue
+            val notes = root.optString("notes").orEmpty().ifBlank { "本地更新包" }
+            return UpdateCheck(
+                release = AppRelease(
+                    version = version,
+                    tag = "v$version",
+                    notes = notes,
+                    apkUrl = "",
+                    apkName = apkName,
+                    sumsUrl = "",
+                    size = apkFile.length(),
+                    localApkPath = apkFile.absolutePath,
+                    localSha256 = root.optString("sha256").trim(),
+                ),
+            )
+        }
+        return null
+    }
+
     suspend fun check(): UpdateCheck = withContext(Dispatchers.IO) {
+        // 1) 优先本地离线更新包（Download/DSH-Go/update.json），命中完全不联网
+        checkLocal()?.let { return@withContext it }
+        // 2) 本地没有新版才走 GitHub
         val fetched = fetchLatest()
         val release = fetched.release ?: return@withContext fetched
         if (compareVersions(release.version, currentVersion) > 0) fetched
@@ -285,6 +348,50 @@ object AppUpdates {
                     if (f.name.endsWith(".apk") || f.name.endsWith(".apk.part") || f.name.endsWith(".txt.sums")) {
                         f.delete()
                     }
+                }
+
+                // 0) 本地离线更新：直接从手机存储复制安装包，全程不联网
+                if (info.isLocal) {
+                    val src = File(info.localApkPath)
+                    if (!src.isFile || !src.canRead()) {
+                        throw IllegalStateException("本地更新包不可用，请重新拷贝到 Download/DSH-Go")
+                    }
+                    val total = src.length().coerceAtLeast(1)
+                    statusText = "正在安装本地更新包… 0%"
+                    src.inputStream().use { input ->
+                        tmp.outputStream().use { out ->
+                            val buf = ByteArray(64 * 1024)
+                            var done = 0L
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n <= 0) break
+                                out.write(buf, 0, n)
+                                done += n
+                                progress = (done.toFloat() / total).coerceIn(0f, 1f)
+                                statusText = "正在安装本地更新包… ${(progress * 100).toInt()}%"
+                            }
+                            out.flush()
+                        }
+                    }
+                    if (info.localSha256.isNotBlank()) {
+                        statusText = "正在校验安装包…"
+                        val actual = sha256(tmp)
+                        if (!actual.equals(info.localSha256, ignoreCase = true)) {
+                            tmp.delete()
+                            throw IllegalStateException("本地更新包校验失败（sha256 不匹配），请重新拷贝")
+                        }
+                    }
+                    if (target.exists()) target.delete()
+                    if (!tmp.renameTo(target)) {
+                        tmp.copyTo(target, overwrite = true)
+                        tmp.delete()
+                    }
+                    statusText = "正在打开安装程序…"
+                    install(ctx, target)
+                    downloading = false
+                    prompt = false
+                    Store.toast = "已准备本地更新包，请在系统安装界面完成更新"
+                    return@withContext
                 }
 
                 // 1) 校验文件可选：短超时；失败 / 为空 / 404 就跳过校验继续下载 APK

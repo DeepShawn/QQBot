@@ -346,6 +346,7 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     AppUpdates.setAutoCheck(ctx, on)
                 },
             )
+            Hint("离线更新：把新 APK 放到 Download/DSH-Go/，同目录写 update.json（version / apk / sha256 / notes），「检查更新」会优先用本地包，不联网。")
             ArrowPreference(
                 title = "更新机器人代码",
                 summary = botSummaryText(),
