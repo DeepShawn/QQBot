@@ -234,5 +234,8 @@
       "image_size": "1024x1024"
     }
   },
-  "ai_chat": {}
+  "ai_chat": {},
+  "ui": {
+    "accent": "ice"
+  }
 }

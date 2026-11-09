@@ -48,10 +48,7 @@ import top.yukonga.miuix.kmp.overlay.OverlayDialog
 
 // ============================================================ Design tokens（深色 · 液态玻璃）
 
-/** 强调色 / 语义色。 */
-val GlassAccent = Color(0xFF5B8CFF)
-val GlassAccent2 = Color(0xFF8A6CFF)
-val GlassAccentOnGlass = Color(0xFF8FB0FF)
+/** 语义色（强调色由 LocalAccent/Accent.kt 提供，可切换）。 */
 val GlassSuccess = Color(0xFF30D158)
 val GlassWarning = Color(0xFFFF9F0A)
 val GlassDanger = Color(0xFFFF453A)
@@ -199,6 +196,7 @@ fun Modifier.glass(
 /** 深色底 + 4 团径向光斑 + 暗角；整页静态绘制（drawWithCache 缓存 Brush）。 */
 @Composable
 fun GlassBackdrop(modifier: Modifier = Modifier) {
+    val accent = LocalAccent.current
     Spacer(
         modifier
             .fillMaxSize()
@@ -219,7 +217,7 @@ fun GlassBackdrop(modifier: Modifier = Modifier) {
                     ),
                 )
                 val blobs = listOf(
-                    blob(Color(0x475B6CFF), 0.12f, 0.06f, 0.95f),
+                    blob(accent.blob, 0.12f, 0.06f, 0.95f),
                     blob(Color(0x292BD4C8), 0.98f, 0.38f, 0.80f),
                     blob(Color(0x2EA15BFF), 0.18f, 0.80f, 1.00f),
                     blob(Color(0x14FF7A59), 0.88f, 1.02f, 0.70f),
@@ -319,16 +317,17 @@ fun GlassButton(
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.96f else 1f, label = "glassButtonScale")
     val shape = RoundedCornerShape(50)
+    val accent = LocalAccent.current
 
     val base = modifier.height(48.dp).graphicsLayer { scaleX = scale; scaleY = scale }
     val decorated = if (primary) {
-        base.shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = Color(0x8C5B8CFF))
+        base.shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = accent.glow)
     } else base
 
     Box(
         modifier = decorated
             .clip(shape)
-            .background(if (primary) Brush.linearGradient(listOf(GlassAccent, GlassAccent2)) else Brush.linearGradient(listOf(GlassTokens.regularFill, GlassTokens.regularFill)))
+            .background(if (primary) Brush.linearGradient(listOf(accent.primary, accent.secondary)) else Brush.linearGradient(listOf(GlassTokens.regularFill, GlassTokens.regularFill)))
             .then(if (primary) Modifier else Modifier.border(1.dp, Brush.linearGradient(colorStops = GlassTokens.regularRim.toTypedArray()), shape))
             .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -355,6 +354,7 @@ fun GlassTabBar(
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(GlassRadius.xl)
+    val accent = LocalAccent.current
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -367,7 +367,7 @@ fun GlassTabBar(
     ) {
         items.forEachIndexed { i, item ->
             val selected = i == selectedIndex
-            val tint = if (selected) GlassAccentOnGlass else Color(0x99FFFFFF)
+            val tint = if (selected) accent.onGlass else Color(0x99FFFFFF)
             val interaction = remember(i) { MutableInteractionSource() }
             val pressed by interaction.collectIsPressedAsState()
             val scale by animateFloatAsState(if (pressed) 0.92f else 1f, label = "glassTabScale")
@@ -380,8 +380,12 @@ fun GlassTabBar(
                     .then(
                         if (selected) {
                             Modifier
-                                .background(GlassTokens.accentFill)
-                                .border(1.dp, Brush.verticalGradient(listOf(Color(0x59FFFFFF), Color(0x0FFFFFFF))), RoundedCornerShape(26.dp))
+                                .background(accent.fill)
+                                .border(
+                                    1.dp,
+                                    Brush.verticalGradient(listOf(accent.primary.copy(alpha = 0.55f), Color(0x0FFFFFFF))),
+                                    RoundedCornerShape(26.dp),
+                                )
                         } else Modifier,
                     )
                     .clickable(interactionSource = interaction, indication = null) { onSelect(i) },
@@ -418,9 +422,9 @@ fun InkBox(
     )
 }
 
-/** 语义色小圆点（带 25% 同色光晕）。 */
+/** 小圆点（带 25% 同色光晕）；默认取当前主题色。 */
 @Composable
-fun GlassDot(color: Color) {
+fun GlassDot(color: Color = LocalAccent.current.primary) {
     Box(Modifier.size(15.dp).clip(CircleShape).background(color.copy(alpha = 0.25f)), contentAlignment = Alignment.Center) {
         Box(Modifier.size(9.dp).clip(CircleShape).background(color))
     }

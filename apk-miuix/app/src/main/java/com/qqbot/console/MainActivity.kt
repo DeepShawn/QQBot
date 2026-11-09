@@ -54,6 +54,8 @@ import com.qqbot.console.ui.GlassTabBar
 import com.qqbot.console.ui.GlassTabItem
 import com.qqbot.console.ui.GlassText
 import com.qqbot.console.ui.GlassTokens
+import com.qqbot.console.ui.LocalAccent
+import com.qqbot.console.ui.accentById
 import com.qqbot.console.ui.GroupPage
 import com.qqbot.console.ui.glass
 import com.qqbot.console.ui.HomePage
@@ -98,15 +100,17 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {
         }
         setContent {
-            // 液态玻璃：全局深色优先，强调色用冰川蓝
-            val controller = remember {
-                ThemeController(ColorSchemeMode.Dark, keyColor = Color(0xFF5B8CFF))
+            // 液态玻璃：全局深色优先；强调色来自 config `ui.accent`（可在「更多 → 主题色」切换）
+            val accent = accentById(Store.str("config", "ui", "accent"))
+            val controller = remember(accent.id) {
+                ThemeController(ColorSchemeMode.Dark, keyColor = accent.primary)
             }
             // MIUIX 的弹窗 / 下拉用 navigationevent 处理返回手势，必须能拿到 dispatcher，否则一弹就闪退；
             // 关掉 squircle，避免 MIUIX 的圆角与玻璃渐变描边在角部错位
             androidx.compose.runtime.CompositionLocalProvider(
                 androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner provides this@MainActivity,
                 LocalSquircleEnabled provides false,
+                LocalAccent provides accent,
             ) {
                 MiuixTheme(controller = controller) { Root() }
             }

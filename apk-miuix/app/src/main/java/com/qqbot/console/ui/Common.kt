@@ -25,6 +25,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.text.font.FontWeight
@@ -114,6 +115,7 @@ fun InfoRow(title: String, value: String) {
 fun ConfigSwitch(title: String, summary: String? = null, vararg path: String, default: Boolean = false) {
     val scope = rememberCoroutineScope()
     val checked = Store.bool("config", *path, def = default)
+    val accent = LocalAccent.current
     SwitchPreference(
         title = title,
         titleColor = BasicComponentDefaults.titleColor(color = GlassText.primary),
@@ -125,9 +127,9 @@ fun ConfigSwitch(title: String, summary: String? = null, vararg path: String, de
             uncheckedThumbColor = Color(0xFFE8EBF2),
             disabledCheckedThumbColor = Color(0x99FFFFFF),
             disabledUncheckedThumbColor = Color(0x99E8EBF2),
-            checkedTrackColor = GlassAccent,
+            checkedTrackColor = accent.primary,
             uncheckedTrackColor = Color(0x29FFFFFF),
-            disabledCheckedTrackColor = Color(0x665B8CFF),
+            disabledCheckedTrackColor = accent.primary.copy(alpha = 0.40f),
             disabledUncheckedTrackColor = Color(0x14FFFFFF),
         ),
         onCheckedChange = { v -> scope.launch { Store.patch(com.qqbot.console.patchOf(*path, value = v), null) } },
@@ -150,7 +152,9 @@ fun EditPreference(
 ) {
     var show by remember { mutableStateOf(false) }
     var text by remember { mutableStateOf("") }
+    var focused by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val accent = LocalAccent.current
     val shown = when {
         secret -> if (current.isBlank()) "未设置" else current
         current.isBlank() -> "未设置"
@@ -184,13 +188,16 @@ fun EditPreference(
             cornerRadius = GlassRadius.md,
             colors = TextFieldDefaults.textFieldColors(
                 backgroundColor = GlassTokens.insetFill,
-                labelColor = GlassText.tertiary,
-                borderColor = GlassText.divider,
+                labelColor = if (focused) accent.primary else GlassText.tertiary,
+                borderColor = if (focused) accent.primary else GlassText.divider,
             ),
             keyboardOptions = if (numeric) androidx.compose.foundation.text.KeyboardOptions(
                 keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
             ) else androidx.compose.foundation.text.KeyboardOptions.Default,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 16.dp)
+                .onFocusChanged { focused = it.isFocused },
         )
         DialogButtons(
             onCancel = { show = false },

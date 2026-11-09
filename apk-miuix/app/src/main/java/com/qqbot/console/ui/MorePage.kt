@@ -62,6 +62,7 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var showScheduled by remember { mutableStateOf(false) }
     var showSafety by remember { mutableStateOf(false) }
     var showOfficial by remember { mutableStateOf(false) }
+    var showTheme by remember { mutableStateOf(false) }
 
     // 全屏管理页：提前返回，页面自己带「返回更多」
     if (showKeywords) {
@@ -90,6 +91,10 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     }
     if (showOfficial) {
         OfficialBotPage(padding, scrollBehavior) { showOfficial = false }
+        return
+    }
+    if (showTheme) {
+        ThemePage(padding, scrollBehavior) { showTheme = false }
         return
     }
 
@@ -422,6 +427,11 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 title = "官方机器人",
                 summary = "用 q.qq.com 官方机器人通道（不登个人号），注意平台限制",
                 onClick = { showOfficial = true },
+            )
+            ArrowPreference(
+                title = "主题色",
+                summary = "切换玻璃强调色（按钮 / 选中态 / 开关 / 背景光斑）",
+                onClick = { showTheme = true },
             )
             ArrowPreference(
                 title = "运行 Python 代码",

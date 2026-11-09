@@ -27,6 +27,9 @@ DEFAULTS = {
         "sandbox": False,
     },
     # 防封（降低风险）模式：发送延迟 / 全局限频 / 群白名单 / 链接与敏感词过滤
+    "ui": {
+        "accent": "ice",
+    },
     "safety": {
         "low_risk": True,
         "reply_delay_min": 1.0,
