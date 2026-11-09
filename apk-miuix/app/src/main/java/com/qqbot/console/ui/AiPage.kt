@@ -246,7 +246,14 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     }
 
     accountDialog?.let { id ->
-        AccountDialog(providerId = id, onDismiss = { accountDialog = null })
+        AccountDialog(
+            providerId = id,
+            onDismiss = { accountDialog = null },
+            onSwitchToApiKey = {
+                accountDialog = null
+                Store.toast = "把「接口设置 → 认证方式」改成 API Key，再填上 API Key"
+            },
+        )
     }
 
     val pickerProfile = editing

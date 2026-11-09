@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,7 +52,11 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
  * 已登录显示账号、模型和退出登录。
  */
 @Composable
-fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
+fun AccountDialog(
+    providerId: String,
+    onDismiss: () -> Unit,
+    onSwitchToApiKey: (() -> Unit)? = null,
+) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val account = AccountsStore.find(providerId)
@@ -62,6 +67,8 @@ fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
     var input by remember { mutableStateOf("") }
     var confirmSignout by remember { mutableStateOf(false) }
     var signingOut by remember { mutableStateOf(false) }
+    // 每次开始/取消登录 +1，用来丢弃已经过期的 begin 结果（避免取消后又弹出登录流程）
+    var loginGen by remember { mutableIntStateOf(0) }
 
     fun startLogin() {
         if (starting) return
@@ -69,8 +76,10 @@ fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
         actionError = ""
         input = ""
         attempt = null
+        val gen = ++loginGen
         scope.launch {
             val r = Accounts.begin(providerId)
+            if (gen != loginGen) return@launch
             starting = false
             if (r.attempt != null) {
                 attempt = r.attempt
@@ -80,9 +89,16 @@ fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
         }
     }
 
-    fun cancelLogin(a: Attempt) {
-        attempt = a.copy(phase = "cancelled", message = "已取消登录")
-        scope.launch { Accounts.cancel(a.id) }
+    /** 取消登录：先把服务端 attempt 取消掉（失败也忽略），然后立即关闭弹窗，避免卡死。 */
+    fun cancelAndClose(a: Attempt?) {
+        loginGen++
+        starting = false
+        if (a != null && a.active) {
+            attempt = a.copy(phase = "cancelled", message = "已取消登录")
+            val id = a.id
+            AppScope.launch { Accounts.cancel(id) }
+        }
+        onDismiss()
     }
 
     fun submitAnswer(a: Attempt) {
@@ -124,17 +140,30 @@ fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
         }
     }
 
-    // 轮询登录进度：1.2 秒一次，直到 done / failed / cancelled
+    // 轮询登录进度：1.2 秒一次，最多等 180 秒；弹窗关闭 / 取消 / 重试时协程自动取消
     LaunchedEffect(attempt?.id) {
         val id = attempt?.id ?: return@LaunchedEffect
+        val startedAt = System.currentTimeMillis()
         var misses = 0
         while (true) {
             delay(1200)
+            if (System.currentTimeMillis() - startedAt > 180_000L) {
+                attempt = attempt?.copy(
+                    phase = "failed",
+                    message = "登录超时",
+                    error = "登录超时：可能是网络或 Anthropic 限流，请取消后换网络再试",
+                )
+                break
+            }
             val v = Accounts.poll(id)
             if (v == null) {
                 misses++
                 if (misses >= 5) {
-                    attempt = attempt?.copy(phase = "failed", error = "连接管理服务失败，请稍后再试")
+                    attempt = attempt?.copy(
+                        phase = "failed",
+                        message = "连接失败",
+                        error = "连接管理服务失败，请稍后再试",
+                    )
                     break
                 }
                 continue
@@ -151,13 +180,19 @@ fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
         }
     }
 
+    val errorText = (attempt?.error.orEmpty() + " " + actionError).trim()
+    val rateLimited = errorText.contains("429") || errorText.contains("限流")
+
     OverlayDialog(
         show = true,
         title = "${account.name} 账号",
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            latestAttempt?.takeIf { it.active }?.let { a -> AppScope.launch { Accounts.cancel(a.id) } }
+            onDismiss()
+        },
     ) {
         Column(
-            Modifier.fillMaxWidth().heightIn(max = 430.dp).verticalScroll(rememberScrollState()),
+            Modifier.fillMaxWidth().heightIn(max = 460.dp).verticalScroll(rememberScrollState()),
         ) {
             val a = attempt
             when {
@@ -185,6 +220,7 @@ fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
                         a = a,
                         input = input,
                         actionError = actionError,
+                        rateLimited = rateLimited,
                         onInput = { input = it },
                         onOpenUrl = { url -> openInBrowser(ctx, url) },
                         onCopy = { text ->
@@ -193,9 +229,10 @@ fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
                         },
                         onSubmit = { submitAnswer(a) },
                         onRetry = { startLogin() },
-                        onCancel = { cancelLogin(a) },
+                        onCancel = { cancelAndClose(a) },
                         onFinish = { scope.launch { AccountsStore.refresh() }; onDismiss() },
-                        onClose = onDismiss,
+                        onClose = { cancelAndClose(a) },
+                        onUseApiKey = onSwitchToApiKey,
                     )
                 }
 
@@ -235,18 +272,65 @@ fun AccountDialog(providerId: String, onDismiss: () -> Unit) {
                         Spacer(Modifier.height(10.dp))
                         Text("这个版本还不支持这种账号，请先升级服务端代码。", fontSize = 13.sp, color = Warn)
                     }
+                    if (starting) {
+                        Spacer(Modifier.height(12.dp))
+                        InfiniteProgressIndicator()
+                        Spacer(Modifier.height(8.dp))
+                        Text("正在准备登录…", fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
+                    }
                     if (actionError.isNotBlank()) {
                         Spacer(Modifier.height(10.dp))
                         Text(actionError, fontSize = 13.sp, color = Bad)
                     }
+                    if (rateLimited) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "看起来被 Anthropic 限流了（HTTP 429）：换网络 / VPN 节点再试，或直接用 API Key。",
+                            fontSize = 12.sp,
+                            color = Warn,
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "如果一直卡住，可能是当前网络被 Anthropic 限流：请取消后切换 VPN 节点 / 换网络再试；也可以改用 API Key。",
+                        fontSize = 12.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    )
                     Spacer(Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        TextButton(text = "关闭", onClick = onDismiss, modifier = Modifier.weight(1f))
                         TextButton(
-                            text = if (starting) "正在准备…" else "开始登录",
-                            onClick = { startLogin() },
+                            text = if (starting) "取消" else "关闭",
+                            onClick = {
+                                if (starting) {
+                                    loginGen++
+                                    starting = false
+                                }
+                                onDismiss()
+                            },
                             modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.textButtonColorsPrimary(),
+                        )
+                        if (starting) {
+                            TextButton(
+                                text = "正在准备…",
+                                onClick = {},
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.textButtonColorsPrimary(),
+                            )
+                        } else {
+                            TextButton(
+                                text = "开始登录",
+                                onClick = { startLogin() },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.textButtonColorsPrimary(),
+                            )
+                        }
+                    }
+                    if (rateLimited && onSwitchToApiKey != null) {
+                        Spacer(Modifier.height(6.dp))
+                        TextButton(
+                            text = "改用 API Key",
+                            onClick = { onSwitchToApiKey() },
+                            modifier = Modifier.fillMaxWidth(),
                         )
                     }
                 }
@@ -261,6 +345,7 @@ private fun AttemptBody(
     a: Attempt,
     input: String,
     actionError: String,
+    rateLimited: Boolean,
     onInput: (String) -> Unit,
     onOpenUrl: (String) -> Unit,
     onCopy: (String) -> Unit,
@@ -269,10 +354,26 @@ private fun AttemptBody(
     onCancel: () -> Unit,
     onFinish: () -> Unit,
     onClose: () -> Unit,
+    onUseApiKey: (() -> Unit)?,
 ) {
     val message = a.message.ifBlank { phaseName(a.phase) }
     Text(message, fontSize = 15.sp, fontWeight = FontWeight.Medium)
     Spacer(Modifier.height(10.dp))
+
+    if (actionError.isNotBlank()) {
+        Text(actionError, fontSize = 13.sp, color = Bad)
+        Spacer(Modifier.height(8.dp))
+    }
+
+    val activePhase = a.phase == "open" || a.phase == "device" || a.phase == "prompt" || a.phase == "starting"
+    if (activePhase) {
+        Text(
+            "如果一直卡（比如停在「正在完成登录」），可能是当前网络被 Anthropic 限流：请取消后切换 VPN 节点 / 换网络再试；也可以改用 API Key。",
+            fontSize = 12.sp,
+            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+        )
+        Spacer(Modifier.height(10.dp))
+    }
 
     when (a.phase) {
         "open" -> {
@@ -400,14 +501,30 @@ private fun AttemptBody(
                 fontSize = 13.sp,
                 color = Bad,
             )
+            if (rateLimited) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "错误里包含 429 / 限流：换个网络或 VPN 节点再试；也可以改用 API Key。",
+                    fontSize = 12.sp,
+                    color = Warn,
+                )
+            }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(text = "关闭", onClick = onClose, modifier = Modifier.weight(1f))
+                TextButton(text = "取消", onClick = onCancel, modifier = Modifier.weight(1f))
                 TextButton(
                     text = "重试",
                     onClick = onRetry,
                     modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
+            }
+            if (rateLimited && onUseApiKey != null) {
+                Spacer(Modifier.height(6.dp))
+                TextButton(
+                    text = "改用 API Key",
+                    onClick = { onUseApiKey() },
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
