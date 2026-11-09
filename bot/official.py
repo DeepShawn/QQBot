@@ -224,6 +224,15 @@ class _IdMap:
         return key[len(prefix):]
 
 
+_RAW_MENTION_RE = re.compile(r"<@!?[A-Za-z0-9_\-]{6,}>|<qqbot-at-user[^>]*/?>")
+
+
+def _strip_raw_mentions(text: str) -> str:
+    """去掉正文里的原始 @ 标记（<@openid> / <qqbot-at-user …/>），避免以乱码形式出现。"""
+    cleaned = _RAW_MENTION_RE.sub(" ", str(text or ""))
+    return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+
+
 def _normalize_segments(message) -> list[dict]:
     if isinstance(message, str):
         return [{"type": "text", "data": {"text": message}}]
@@ -652,6 +661,7 @@ class OfficialClient:
                     return " " if m.group(1) in bot_mark_ids else m.group(0)
                 content = re.sub(r"<@!?([^>\s]+)>", _strip, content)
                 content = " ".join(content.split())
+            content = _strip_raw_mentions(content) or content
             return {
                 "post_type": "message",
                 "message_type": "group",
@@ -831,12 +841,12 @@ class OfficialClient:
                 except (TypeError, ValueError):
                     user_openid = None
                 if user_openid:
-                    mentions += f"<@{user_openid}> "
-        texts = mentions + "".join(
+                    mentions += f"<qqbot-at-user id=\"{user_openid}\" /> "
+        texts = mentions + _strip_raw_mentions("".join(
             str((seg.get("data") or {}).get("text") or "")
             for seg in segments
             if seg.get("type") == "text"
-        ).strip()
+        )).strip()
         images = [seg for seg in segments if seg.get("type") == "image"]
         files = [seg for seg in segments if seg.get("type") == "file"]
         if not texts and not images and not files:

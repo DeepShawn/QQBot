@@ -1543,6 +1543,12 @@ class Plugin(PluginBase):
                     + "\n\n请结合以上资料回答；如果用了搜索结果，可以附上来源链接。",
                 }
             )
+        # 官方通道：去掉原始 @ 标记，并告诉模型说话人是谁（绑定过名字就叫名字）
+        if isinstance(official_meta, dict) and official_meta:
+            prompt = re.sub(r"<@!?[A-Za-z0-9_\-]{6,}>|<qqbot-at-user[^>]*/?>", " ", str(prompt or "")).strip() or prompt
+            speaker = str((event.get("sender") or {}).get("nickname") or "").strip()
+            if speaker and speaker not in ("群友", "朋友"):
+                messages.append({"role": "system", "content": f"当前和你说话的人叫「{speaker}」，称呼对方时用这个名字。"})
         messages.append({"role": "user", "content": prompt})
 
         try:

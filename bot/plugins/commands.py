@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from pathlib import Path
 
@@ -65,8 +66,40 @@ class Plugin(PluginBase):
             text = text_of(strip_at(event.get("message"), self.ctx.self_id)).strip()
         return text
 
+    _NAME_RE = re.compile(
+        r"^(?:我叫|叫我|我的名字是|我的名字叫|以后叫我|你可以叫我)\s*[「“\"]?([^\s，,。！!？?」”\"、]{1,20})"
+    )
+
+    def _auto_bind_name(self, event, text: str) -> None:
+        """官方通道：用户自然地说「我叫X / 叫我X」时静默绑定昵称，不吞消息（AI 照常回复）。"""
+        meta = event.get("_official") or {}
+        if not isinstance(meta, dict) or not meta:
+            return
+        openid = str(meta.get("member_openid") or meta.get("user_openid") or "")
+        if not openid:
+            return
+        m = self._NAME_RE.match(text.strip())
+        if not m:
+            return
+        name = m.group(1)
+        for tail in ("你记住", "记住", "你记好", "哦", "啊", "呀", "吧"):
+            if name.endswith(tail) and len(name) > len(tail):
+                name = name[: -len(tail)]
+        name = name.strip()
+        # 「我叫你吃饭」这类是动词「叫」，不是报名字
+        if not name or name[0] in "你他她它们大家" :
+            return
+        try:
+            official.set_nickname(self.ctx.data_dir, openid, name)
+            event.setdefault("sender", {})["nickname"] = name
+            self.ctx.log.info("官方通道自动绑定昵称 openid=%s… name=%s", openid[:6], name)
+        except Exception as e:
+            self.ctx.log.warning("自动绑定昵称失败: %s", e)
+
     async def on_event(self, event) -> bool:
         text = self._extract(event)
+        if text and not text.startswith("/"):
+            self._auto_bind_name(event, text)
         if not text or not text.startswith("/"):
             return False
         cmd = text.split()[0].lower()
