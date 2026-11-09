@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import logging
 import threading
 import time
@@ -214,6 +215,7 @@ class OfficialClient:
         self.reconnect_seconds = 5.0
         self.connected = asyncio.Event()
         self.self_id = 0
+        self._bot_raw_ids: set[str] = set()
         self._ws = None
         self._token = ""
         self._token_expires = 0.0
@@ -315,6 +317,7 @@ class OfficialClient:
             raw = data["user"].get("id")
         if raw is None:
             return
+        self._bot_raw_ids.add(str(raw))
         try:
             self.self_id = int(raw)
         except (TypeError, ValueError):
@@ -446,11 +449,12 @@ class OfficialClient:
         if op != 0:  # 其它 op 忽略
             return
         event_type = str(payload.get("t") or "")
-        self.log.info("官方事件 t=%s s=%s", event_type, seq)
+        self.log.info("官方事件 t=%s s=%s keys=%s", event_type, seq, sorted(data.keys()) if isinstance(data, dict) else None)
         if event_type == "READY":
             user = data.get("user") if isinstance(data.get("user"), dict) else {}
             raw = user.get("id")
             if raw is not None:
+                self._bot_raw_ids.add(str(raw))
                 try:
                     self.self_id = int(raw)
                 except (TypeError, ValueError):
@@ -475,6 +479,37 @@ class OfficialClient:
         except Exception:
             self.log.exception("官方事件处理异常")
 
+    def _bot_mentioned(self, data: dict, content: str) -> tuple[bool, set]:
+        """全量群消息里判断是否 @ 了本机器人；返回 (是否@, 正文里机器人的标记 id 集合)。"""
+        bot_ids = {str(x) for x in self._bot_raw_ids if str(x)}
+        if self.self_id:
+            bot_ids.add(str(self.self_id))
+        hit = False
+        mark_ids = set(bot_ids)
+        mentions = data.get("mentions")
+        summary = []
+        if isinstance(mentions, list):
+            for item in mentions:
+                if not isinstance(item, dict):
+                    continue
+                ids = {
+                    str(item.get(k))
+                    for k in ("id", "member_openid", "user_openid", "union_openid")
+                    if item.get(k)
+                }
+                is_bot = bool(item.get("is_you")) or bool(item.get("bot")) or bool(ids & bot_ids)
+                summary.append({"keys": sorted(item.keys()), "is_you": item.get("is_you"), "bot": item.get("bot")})
+                if is_bot:
+                    hit = True
+                    mark_ids |= ids
+        if not hit:
+            for bid in bot_ids:
+                if f"<@!{bid}>" in content or f"<@{bid}>" in content:
+                    hit = True
+                    break
+        self.log.info("官方群消息 @机器人=%s mentions=%s", hit, summary)
+        return hit, mark_ids
+
     # ---------- 事件翻译 ----------
     def _translate_event(self, event_type: str, data: dict) -> dict | None:
         if not isinstance(data, dict):
@@ -486,7 +521,8 @@ class OfficialClient:
             timestamp = int(float(data.get("timestamp") or time.time()))
         except (TypeError, ValueError):
             timestamp = int(time.time())
-        if event_type == "GROUP_AT_MESSAGE_CREATE":
+        if event_type in ("GROUP_AT_MESSAGE_CREATE", "GROUP_MESSAGE_CREATE"):
+            is_at_event = event_type == "GROUP_AT_MESSAGE_CREATE"
             group_openid = str(data.get("group_openid") or "").strip()
             member_openid = str(
                 author.get("member_openid") or author.get("id") or ""
@@ -498,6 +534,34 @@ class OfficialClient:
             self._remember_context(
                 "group", group_openid, msg_id, GROUP_CONTEXT_SECONDS
             )
+            # GROUP_MESSAGE_CREATE 可能是"全量群消息"事件：只有真的 @ 了机器人才算 @，
+            # 否则按普通群消息翻译（插件里 group_require_at 会拦住，不会乱回复）
+            if not is_at_event:
+                mentioned_bot, bot_mark_ids = self._bot_mentioned(data, content)
+                if not mentioned_bot:
+                    return {
+                        "post_type": "message",
+                        "message_type": "group",
+                        "self_id": self.self_id,
+                        "user_id": user_id,
+                        "group_id": group_id,
+                        "message_id": msg_id,
+                        "message": [{"type": "text", "data": {"text": content}}],
+                        "raw_message": content,
+                        "time": timestamp,
+                        "sender": {"user_id": user_id, "nickname": "群友"},
+                        "_official": {
+                            "kind": "group",
+                            "group_openid": group_openid,
+                            "member_openid": member_openid,
+                            "msg_id": msg_id,
+                        },
+                    }
+                # 全量群消息里 @ 是写在正文里的（<@id> / <@!id>），去掉机器人的标记再交给插件
+                def _strip(m):
+                    return " " if m.group(1) in bot_mark_ids else m.group(0)
+                content = re.sub(r"<@!?([^>\s]+)>", _strip, content)
+                content = " ".join(content.split())
             return {
                 "post_type": "message",
                 "message_type": "group",
