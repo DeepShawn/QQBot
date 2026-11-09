@@ -162,6 +162,13 @@ DEFAULTS = {
             "push_groups": [],
             "caption": "🎨 画好了",
         },
+        "quota_refresh": {
+            # 每 301 分钟（5 小时 01 分）给已登录的 Claude/ChatGPT 发「你好」刷新用量窗口
+            "enabled": True,
+            "interval_minutes": 301,
+            "providers": ["claude", "chatgpt"],
+            "message": "你好",
+        },
         "scheduled": {
             # 定时发送：默认每 301 分钟（5 小时 01 分）发一条问候+图
             "enabled": True,

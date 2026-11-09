@@ -225,6 +225,15 @@
     "skills": {
       "enabled": true
     },
+    "quota_refresh": {
+      "enabled": true,
+      "interval_minutes": 301,
+      "providers": [
+        "claude",
+        "chatgpt"
+      ],
+      "message": "你好"
+    },
     "scheduled": {
       "enabled": true,
       "interval_minutes": 301,

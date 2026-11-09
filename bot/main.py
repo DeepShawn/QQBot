@@ -24,6 +24,7 @@ from context import Context  # noqa: E402
 from dispatcher import Dispatcher  # noqa: E402
 from onebot import OneBotClient  # noqa: E402
 import scheduled  # noqa: E402
+import quota_refresh  # noqa: E402
 
 try:  # 账号续期用；导入失败也不影响主流程
     import account_core  # noqa: E402
@@ -61,6 +62,10 @@ def setup_logging(level: str, log_file: Path) -> logging.Logger:
     logger.addHandler(fh)
     return logger
 
+
+# 5 小时限额刷新：启动后先等 90s，之后每 60 秒检查一次
+QUOTA_REFRESH_FIRST_DELAY = 90.0
+QUOTA_REFRESH_INTERVAL = 60.0
 
 # 账号主动续期：启动后先等 60s，之后每 20 分钟检查一次；30 分钟内过期就提前刷新
 ACCOUNT_KEEPER_FIRST_DELAY = 60.0
@@ -224,6 +229,16 @@ async def async_main(config_path: Path) -> int:
                 pass
             await asyncio.sleep(3)
 
+    async def quota_refresh_loop():
+        """限额刷新：启动等 90s，之后每 60 秒检查一次是否到 5h01m。"""
+        await asyncio.sleep(QUOTA_REFRESH_FIRST_DELAY)
+        while True:
+            try:
+                await quota_refresh.tick(ctx)
+            except Exception as e:
+                logger.warning("限额刷新 tick 异常: %s", e)
+            await asyncio.sleep(QUOTA_REFRESH_INTERVAL)
+
     async def scheduled_loop():
         """定时发送：每 30 秒检查一次是否到点（状态文件防重复）。"""
         while True:
@@ -239,6 +254,7 @@ async def async_main(config_path: Path) -> int:
         asyncio.create_task(heartbeat(), name="heartbeat"),
         asyncio.create_task(scheduled_loop(), name="scheduled"),
         asyncio.create_task(account_keeper(logger), name="account-keeper"),
+        asyncio.create_task(quota_refresh_loop(), name="quota-refresh"),
     ]
     stop = asyncio.Event()
 

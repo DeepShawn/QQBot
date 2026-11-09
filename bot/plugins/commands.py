@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import agent
+import quota_refresh
 from dispatcher import PluginBase
 from utils import mentioned, strip_at, text_of
 
@@ -30,6 +31,7 @@ class Plugin(PluginBase):
             "/reload": self.cmd_reload,
             "/model": self.cmd_model,
             "/task": self.cmd_task,
+            "/刷新限额": self.cmd_refresh_quota,
         }
 
     # ---------- 读写原始 config.json（原子替换，避免和热加载打架） ----------
@@ -269,6 +271,36 @@ class Plugin(PluginBase):
 
         task.add_done_callback(_cleanup)
 
+    # ---------- /刷新限额 ----------
+    async def cmd_refresh_quota(self, event, args):
+        """立即刷新 Claude/ChatGPT 的 5 小时限额（内部发你好，不往 QQ 发消息）。"""
+        try:
+            result = await quota_refresh.tick(self.ctx, force=True)
+        except Exception as e:
+            self.ctx.log.warning("手动刷新限额失败: %s", e)
+            await self.ctx.reply(event, f"刷新限额失败：{e}")
+            return
+        skipped = result.get("skipped") or ""
+        if skipped == "disabled":
+            await self.ctx.reply(event, "限额刷新已在配置里关闭（plugins.quota_refresh.enabled）。")
+            return
+        if skipped == "no-accounts":
+            await self.ctx.reply(event, "没有已登录的 Claude / ChatGPT 账号，先到 App 的「AI 与人格」里连接账号。")
+            return
+        lines = ["⏱ 限额刷新："]
+        refreshed = result.get("refreshed") or []
+        for pid in refreshed:
+            lines.append(f"✅ {pid}：已刷新")
+        for item in result.get("failed") or []:
+            if isinstance(item, dict):
+                lines.append(f"⚠️ {item.get('provider')}：{item.get('error') or '失败'}")
+            else:
+                lines.append(f"⚠️ {item}：失败")
+        if not refreshed and not (result.get("failed") or []):
+            lines.append("没有可刷新的账号")
+        lines.append("（只在内部发「你好」，不会往 QQ 发消息）")
+        await self.ctx.reply(event, "\n".join(lines))
+
     # ---------- 其它 ----------
     async def cmd_help(self, event, args):
         await self.ctx.reply(
@@ -278,6 +310,7 @@ class Plugin(PluginBase):
             "/model 查看/切换模型（账号套餐模型列表，或切换接口：/model 2）\n"
             "/task <需求> 长任务（实时汇报进度，缺环境自动安装）\n"
             "/task stop 停止当前长任务\n"
+            "/刷新限额 立即刷新 Claude/ChatGPT 的 5 小时限额\n"
             "/ping 延迟测试\n"
             "/reload 重载 config.json\n"
             "/help 本说明",
