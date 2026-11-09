@@ -201,6 +201,18 @@ class IntentDetectionTests(unittest.TestCase):
             "画一下这个场景",
             "画只猫",
             "画一幅山水",
+            "画一个太阳",
+            "帮我画张插画",
+            "做张海报",
+            "换个壁纸",
+            "画个头像",
+            "来张风景图",
+            "做个 logo",
+            "来个表情包",
+            "draw a cat",
+            "illustration of a cat",
+            "image of a sunset",
+            "画图",
         ):
             with self.subTest(text=text):
                 self.assertTrue(ai_chat.Plugin._looks_like_image_request(text))
@@ -212,6 +224,7 @@ class IntentDetectionTests(unittest.TestCase):
             "讲个笑话",
             "帮我写个 Python 脚本",
             "总结一下这段话",
+            "继续",  # 没有历史时不算生图
             "",
         ):
             with self.subTest(text=text):
@@ -220,7 +233,7 @@ class IntentDetectionTests(unittest.TestCase):
     def test_prompt_hardening(self):
         hint = ai_chat.LOCAL_IMAGE_TOOL_HINT
         self.assertIn("必须调用", hint)
-        self.assertIn("ASCII", hint)
+        self.assertIn("绝对不要用 ASCII/emoji/代码画图", hint)
         self.assertIn("SVG", hint)
         spec = ai_chat.IMAGE_TOOL_SPEC["function"]["description"]
         self.assertIn("必须直接生成图片", spec)
@@ -273,7 +286,7 @@ class ForcedImageFlowTests(unittest.IsolatedAsyncioTestCase):
 
         imagegen.generate_for_ai = fake_generate
 
-    async def run(self, event=None) -> bool:
+    async def run_event(self, event=None) -> bool:
         return await ai_chat.Plugin(self.ctx).on_event(event or _event())
 
     def last_reply(self) -> str:
@@ -295,7 +308,7 @@ class ForcedImageFlowTests(unittest.IsolatedAsyncioTestCase):
             ["一只橘猫坐在窗台上，水彩风格，暖色阳光，竖构图", "画好啦，橘猫在窗台上晒太阳～"]
         )
         self.install_image()
-        self.assertTrue(await self.run(_event("画张橘猫的图")))
+        self.assertTrue(await self.run_event(_event("画张橘猫的图")))
         # 只调两次模型：写提示词 + 最终描述（没走路由/没被 ASCII 忽悠）
         self.assertEqual(len(self.chat_calls), 2)
         writer_messages = self.chat_calls[0]["messages"]
@@ -307,13 +320,12 @@ class ForcedImageFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("画张橘猫的图", visible[-1]["content"])
         # 画图用写好的提示词
         self.assertEqual(len(self.image_calls), 1)
-        image_prompt = self.image_calls[0][1]["prompt"]
+        image_prompt = self.image_calls[0][0][2]
         self.assertEqual(image_prompt, "一只橘猫坐在窗台上，水彩风格，暖色阳光，竖构图")
         # 图片只发一次，且是 image 段
         self.assertEqual(len(self.ctx.sent), 1)
         message = self.ctx.sent[0]["message"]
-        self.assertEqual(message[0]["type"], "text")
-        self.assertEqual(message[1]["type"], "image")
+        self.assertTrue(any(seg.get("type") == "image" for seg in message))
         # 最终描述来自主模型
         self.assertEqual(self.last_reply(), "画好啦，橘猫在窗台上晒太阳～")
         # 最终描述指令里禁止 ASCII/emoji 冒充图片
@@ -322,13 +334,56 @@ class ForcedImageFlowTests(unittest.IsolatedAsyncioTestCase):
             for m in self.chat_calls[1]["messages"]
             if m.get("role") == "system"
         )
-        self.assertIn("禁止用 ASCII", final_system)
+        self.assertIn("绝对不要用 ASCII", final_system)
         self.assertIn("不要重复提示词", final_system)
+
+    async def test_context_continue_triggers_forced_image(self):
+        _write_history(
+            self.root,
+            [
+                {"role": "user", "content": "画张风景图"},
+                {"role": "assistant", "content": "好的"},
+            ],
+        )
+        self.install_chat(["一张黄昏山谷风景插画，柔和光线，横构图", "画好啦～"])
+        self.install_image()
+        await self.run_event(_event("继续"))
+        self.assertEqual(len(self.image_calls), 1)
+        self.assertEqual(
+            self.image_calls[0][0][2], "一张黄昏山谷风景插画，柔和光线，横构图"
+        )
+        self.assertEqual(len(self.chat_calls), 2)
+
+    async def test_writer_failure_continue_uses_last_image_request_from_history(self):
+        _write_history(
+            self.root,
+            [
+                {"role": "user", "content": "画张风景图"},
+                {"role": "assistant", "content": "好的"},
+            ],
+        )
+        self.install_chat([providers.ProviderError("down"), "画好了～"])
+        self.install_image()
+        await self.run_event(_event("继续"))
+        self.assertEqual(len(self.image_calls), 1)
+        self.assertEqual(self.image_calls[0][0][2], "画张风景图")
+
+    async def test_image_not_configured_falls_back_to_text(self):
+        self.ctx = _make_ctx(
+            self.root,
+            ai_cfg=_ai_cfg(auth="chatgpt", api_key=""),
+            image_enabled=False,
+        )
+        self.install_chat(["我暂时不能画图"])
+        self.install_image()
+        await self.run_event(_event("画张风景图"))
+        self.assertEqual(self.image_calls, [])
+        self.assertEqual(self.last_reply(), "我暂时不能画图")
 
     async def test_non_image_request_keeps_route(self):
         self.install_chat(['{"tool":"none"}', "普通回答"])
         self.install_image()
-        await self.run(_event("讲个笑话"))
+        await self.run_event(_event("讲个笑话"))
         self.assertEqual(len(self.chat_calls), 2)
         self.assertEqual(self.image_calls, [])
         self.assertEqual(self.last_reply(), "普通回答")
@@ -336,21 +391,21 @@ class ForcedImageFlowTests(unittest.IsolatedAsyncioTestCase):
     async def test_writer_failure_falls_back_to_user_text(self):
         self.install_chat([providers.ProviderError("down"), "画好了～"])
         self.install_image()
-        await self.run(_event("画张风景图"))
+        await self.run_event(_event("画张风景图"))
         self.assertEqual(len(self.image_calls), 1)
-        self.assertEqual(self.image_calls[0][1]["prompt"], "画张风景图")
+        self.assertEqual(self.image_calls[0][0][2], "画张风景图")
         self.assertEqual(self.last_reply(), "画好了～")
 
     async def test_empty_final_answer_falls_back(self):
         self.install_chat(["一只猫，水彩风格，柔和光线", ""])
         self.install_image()
-        await self.run(_event("来一张猫的图"))
+        await self.run_event(_event("来一张猫的图"))
         self.assertEqual(self.last_reply(), ai_chat.IMAGE_PROMPT_FALLBACK_REPLY)
 
     async def test_image_generation_failure_falls_back_to_chat(self):
         self.install_chat(["一只猫，水彩风格，柔和光线", "抱歉，画图失败了"])
         self.install_image(error=imagegen.ImageGenError("画图失败"))
-        await self.run(_event("画张猫"))
+        await self.run_event(_event("画张猫"))
         self.assertEqual(self.ctx.sent, [])
         self.assertEqual(self.last_reply(), "抱歉，画图失败了")
 
@@ -365,7 +420,7 @@ class ForcedImageFlowTests(unittest.IsolatedAsyncioTestCase):
         self.ctx = _make_ctx(self.root, ai_cfg=_ai_cfg(auth="", api_key="key"))
         self.install_chat([])
         self.install_image()
-        await self.run(_event("画张风景图"))
+        await self.run_event(_event("画张风景图"))
         self.assertEqual(len(native_calls), 1)
         self.assertEqual(self.image_calls, [])
 
@@ -420,6 +475,9 @@ class BuiltinTriggerTests(unittest.TestCase):
     def test_unrelated_text_not_triggered(self):
         plugin, _ctx = self.make_plugin([])
         self.assertIsNone(self.prompt_of(plugin, "今天天气不错"))
+        # 壁纸/头像只作为 AI 生图意图识别，不单独触发 image_gen 插件（避免误伤）
+        self.assertIsNone(self.prompt_of(plugin, "换个壁纸"))
+        self.assertIsNone(self.prompt_of(plugin, "头像好看吗"))
 
 
 class BuiltinTriggerEventTests(unittest.IsolatedAsyncioTestCase):
