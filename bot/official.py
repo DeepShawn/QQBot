@@ -308,6 +308,7 @@ class OfficialClient:
         # 最近群消息缓存：给「引用消息」和「先发图再 @」用（官方没有 get_msg 接口）
         self._msg_cache: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
         self._msg_seq = 900_000_000
+        self._member_roles: dict[tuple, str] = {}
 
     # ---------- 属性 ----------
     @property
@@ -736,6 +737,13 @@ class OfficialClient:
             self._remember_context(
                 "group", group_openid, msg_id, GROUP_CONTEXT_SECONDS
             )
+            raw_role = str(author.get("member_role") or author.get("role") or "").lower()
+            if raw_role:
+                role = "owner" if "owner" in raw_role else ("admin" if "admin" in raw_role else "member")
+                self._member_roles[(int(group_id), int(user_id))] = role
+                if not getattr(self, "_role_logged", False):
+                    self._role_logged = True
+                    self.log.info("官方群成员身份字段 member_role=%s -> %s", raw_role, role)
             # GROUP_MESSAGE_CREATE 可能是"全量群消息"事件：只有真的 @ 了机器人才算 @，
             # 否则按普通群消息翻译（插件里 group_require_at 会拦住，不会乱回复）
             if not is_at_event:
@@ -985,6 +993,13 @@ class OfficialClient:
             except Exception:
                 pass
             return result
+        if action == "get_group_member_info":
+            try:
+                key = (int(params.get("group_id") or 0), int(params.get("user_id") or 0))
+            except (TypeError, ValueError):
+                key = (0, 0)
+            # 官方没有成员查询接口：用消息事件里带的 member_role；拿不到按普通成员
+            return {"role": self._member_roles.get(key, "member"), "user_id": key[1], "group_id": key[0]}
         if action == "get_msg":
             key = str(params.get("message_id") or "")
             entry = self._msg_cache.get(key)

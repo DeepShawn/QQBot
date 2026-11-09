@@ -427,11 +427,18 @@ class SendTests(OfficialBase):
         self.assertIn("5", str(ctx.exception))
         self.assertEqual(len(self.requests), official.MAX_MSG_SEQ)
 
+    async def test_member_info_uses_event_role(self):
+        client = self.make_client()
+        info = await client.call("get_group_member_info", group_id=1, user_id=2)
+        self.assertEqual(info["role"], "member")
+        client._member_roles[(1, 2)] = "owner"
+        info = await client.call("get_group_member_info", group_id=1, user_id=2)
+        self.assertEqual(info["role"], "owner")
+
     async def test_unsupported_actions(self):
         client = self.make_client()
         for action in (
             "delete_msg",
-            "get_group_member_info",
             "set_group_ban",
             "set_group_kick",
             "get_msg",

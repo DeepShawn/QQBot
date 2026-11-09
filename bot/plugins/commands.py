@@ -111,7 +111,7 @@ class Plugin(PluginBase):
             if not await agent.can_use(self.ctx, event):
                 await self.ctx.reply(event, "这条命令只有管理员能用。")
                 return True
-        elif cmd != "/我叫" and not self.ctx.is_admin(event.get("user_id")):
+        elif cmd not in ("/我叫", "/help", "/帮助") and not self.ctx.is_admin(event.get("user_id")):
             # /我叫 是任何成员都能用的名字绑定，不做管理员门
             await self.ctx.reply(event, "这条命令只有管理员能用。")
             return True
