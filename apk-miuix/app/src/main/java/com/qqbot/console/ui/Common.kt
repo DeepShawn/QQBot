@@ -60,8 +60,8 @@ fun PageList(
         modifier = Modifier
             .fillMaxSize()
             .overScrollVertical()
-            .scrollEdgeFade()
-            .nestedScroll(scrollBehavior.nestedScrollConnection),
+            .scrollEdgeFade(),
+        // 3.20：主界面已无折叠顶栏，去掉 nestedScroll 联动，避免抢手势导致列表滑不动
         contentPadding = PaddingValues(top = padding.calculateTopPadding(), bottom = padding.calculateBottomPadding() + 24.dp),
         content = content,
     )

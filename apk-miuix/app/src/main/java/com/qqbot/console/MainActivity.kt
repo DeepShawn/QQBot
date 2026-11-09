@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import com.qqbot.console.ui.AiPage
 import com.qqbot.console.ui.GlassBackdrop
 import com.qqbot.console.ui.GlassCard
@@ -82,8 +84,19 @@ import top.yukonga.miuix.kmp.squircle.LocalSquircleEnabled
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installCrashLogger()
-        enableEdgeToEdge()
+        // 显式 edge-to-edge：状态栏 / 导航栏都透明，让 GlassBackdrop 铺到状态栏后面
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
+        // 部分 ROM（MIUI 等）光靠 enableEdgeToEdge 仍会留一条黑底，这里再兜底一次
+        try {
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+        } catch (_: Exception) {
+        }
         setContent {
             // 液态玻璃：全局深色优先，强调色用冰川蓝
             val controller = remember {
@@ -318,12 +331,15 @@ private fun MainScreen() {
                         color = GlassText.primary,
                         modifier = Modifier.padding(start = 28.dp, top = 8.dp, bottom = 6.dp),
                     )
-                    when (tab) {
-                        0 -> HomePage(pagePadding, scrollBehavior)
-                        1 -> AiPage(pagePadding, scrollBehavior)
-                        2 -> GroupPage(pagePadding, scrollBehavior)
-                        3 -> RecordsPage(pagePadding, scrollBehavior)
-                        else -> MorePage(pagePadding, scrollBehavior)
+                    // 关键：页面内容必须放在有界剩余高度里，否则 LazyColumn 会被测量成无限高、滑不动
+                    Box(Modifier.fillMaxWidth().weight(1f)) {
+                        when (tab) {
+                            0 -> HomePage(pagePadding, scrollBehavior)
+                            1 -> AiPage(pagePadding, scrollBehavior)
+                            2 -> GroupPage(pagePadding, scrollBehavior)
+                            3 -> RecordsPage(pagePadding, scrollBehavior)
+                            else -> MorePage(pagePadding, scrollBehavior)
+                        }
                     }
                 }
             }
