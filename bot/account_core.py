@@ -28,6 +28,7 @@ import hashlib
 import importlib
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -135,6 +136,7 @@ __all__ = [
     "load_provider",
     "get_record",
     "mark_expired",
+    "refresh_cooldown_remaining",
 ]
 
 
@@ -494,6 +496,8 @@ def _http_error(
     if mapping:
         code, message = mapping
         return AccountError(code, message)
+    if status == 429:
+        return AccountError("busy", "登录服务被限流（HTTP 429），稍后自动重试")
     detail = ""
     if allow_error_body:
         try:
@@ -1180,6 +1184,40 @@ def signout(provider: str) -> dict:
 _refresh_locks_lock = threading.Lock()
 _refresh_locks: dict[str, threading.Lock] = {}
 
+# 刷新被限流时的冷却：冷却期内不再发 HTTP，避免越刷越限
+REFRESH_COOLDOWN_SECONDS = 600.0
+_cooldown_lock = threading.Lock()
+_refresh_cooldowns: dict[str, float] = {}
+
+
+def _cooldown_remaining(pid: str) -> float:
+    with _cooldown_lock:
+        until = float(_refresh_cooldowns.get(pid) or 0.0)
+    return max(0.0, until - time.time())
+
+
+def _set_refresh_cooldown(pid: str, seconds: float | None = None) -> float:
+    window = float(REFRESH_COOLDOWN_SECONDS if seconds is None else seconds)
+    with _cooldown_lock:
+        _refresh_cooldowns[pid] = time.time() + max(1.0, window)
+    return max(1.0, window)
+
+
+def _clear_refresh_cooldown(pid: str) -> None:
+    with _cooldown_lock:
+        _refresh_cooldowns.pop(pid, None)
+
+
+def _busy_message(remaining: float) -> str:
+    minutes = max(1, int(math.ceil(max(0.0, remaining) / 60.0)))
+    return f"登录服务被限流，约 {minutes} 分钟后自动重试"
+
+
+def refresh_cooldown_remaining(provider) -> float:
+    """当前 provider 的刷新冷却剩余秒数（0 = 不在冷却）。"""
+    pid = _provider_id(provider)
+    return _cooldown_remaining(pid)
+
 
 def _refresh_lock(pid: str) -> threading.Lock:
     with _refresh_locks_lock:
@@ -1212,11 +1250,17 @@ def ensure_access(provider: str) -> dict:
         raise AccountError("not-signed-in")
     if not _needs_refresh(record):
         return record
+    remaining = _cooldown_remaining(pid)
+    if remaining > 0:
+        raise AccountError("busy", _busy_message(remaining))
     with _refresh_lock(pid):
         # 等锁期间可能已经被别的线程刷新过
         record = _get_record(pid) or record
         if not _needs_refresh(record):
             return record
+        remaining = _cooldown_remaining(pid)
+        if remaining > 0:
+            raise AccountError("busy", _busy_message(remaining))
         if not str(record.get("refresh") or "").strip():
             raise AccountError("expired")
         refresh_fn = getattr(module, "refresh", None)
@@ -1225,7 +1269,11 @@ def ensure_access(provider: str) -> dict:
         try:
             fresh = refresh_fn(record)
         except AccountError as e:
-            if e.code in ("network", "timeout", "busy"):
+            if e.code == "busy":
+                remaining = _set_refresh_cooldown(pid)
+                log.info("账号刷新被限流，进入冷却 provider=%s", pid)
+                raise AccountError("busy", _busy_message(remaining)) from e
+            if e.code in ("network", "timeout"):
                 raise
             raise AccountError("expired") from e
         except Exception as e:
@@ -1242,6 +1290,7 @@ def ensure_access(provider: str) -> dict:
                 except Exception:
                     merged["account"] = ""
         saved = _save_record(pid, merged)
+        _clear_refresh_cooldown(pid)
         log.info("账号已刷新 provider=%s", pid)
         return saved
 

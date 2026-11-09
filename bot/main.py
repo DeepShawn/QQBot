@@ -25,6 +25,11 @@ from dispatcher import Dispatcher  # noqa: E402
 from onebot import OneBotClient  # noqa: E402
 import scheduled  # noqa: E402
 
+try:  # 账号续期用；导入失败也不影响主流程
+    import account_core  # noqa: E402
+except Exception:  # pragma: no cover
+    account_core = None  # type: ignore[assignment]
+
 try:  # 官方通道可选：导入失败不影响老的 OneBot 通道
     from official import OfficialClient  # noqa: E402
 except Exception:  # pragma: no cover - 运行环境缺少依赖时
@@ -55,6 +60,67 @@ def setup_logging(level: str, log_file: Path) -> logging.Logger:
     fh.setFormatter(fmt)
     logger.addHandler(fh)
     return logger
+
+
+# 账号主动续期：启动后先等 60s，之后每 20 分钟检查一次；30 分钟内过期就提前刷新
+ACCOUNT_KEEPER_FIRST_DELAY = 60.0
+ACCOUNT_KEEPER_INTERVAL = 20 * 60.0
+ACCOUNT_KEEPER_REFRESH_WINDOW = 30 * 60.0
+
+
+async def keeper_tick(now=None, logger=None):
+    """检查一遍账号：将要在 30 分钟内过期的就主动 ensure_access 续期。
+
+    返回 [{"provider":..., "ok": bool, "error"?: str}]，异常只记录日志不抛出。
+    """
+    log = logger or logging.getLogger("qqbot")
+    results: list[dict] = []
+    if account_core is None:
+        return results
+    now_ts = float(now if now is not None else time.time())
+    try:
+        accounts = account_core.list_view()
+    except Exception as e:
+        log.warning("读取账号列表失败，跳过本轮续期: %s", e)
+        return results
+    for item in accounts or []:
+        if not isinstance(item, dict) or not item.get("signedIn"):
+            continue
+        provider = str(item.get("id") or "").strip()
+        if provider not in account_core.PROVIDER_IDS:
+            continue
+        try:
+            record = account_core.get_record(provider)
+        except Exception:
+            record = None
+        if not isinstance(record, dict):
+            continue
+        try:
+            expires_at = float(record.get("expires_at") or 0)
+        except (TypeError, ValueError):
+            expires_at = 0.0
+        if expires_at and (expires_at - now_ts) >= ACCOUNT_KEEPER_REFRESH_WINDOW:
+            continue
+        try:
+            account_core.ensure_access(provider)
+            results.append({"provider": provider, "ok": True})
+            log.info("账号主动续期成功 provider=%s", provider)
+        except Exception as e:
+            message = getattr(e, "message", None) or str(e)
+            log.info("账号主动续期失败 provider=%s: %s", provider, message)
+            results.append({"provider": provider, "ok": False, "error": message})
+    return results
+
+
+async def account_keeper(logger):
+    """后台账号续期循环（main 里每 20 分钟跑一次）。"""
+    await asyncio.sleep(ACCOUNT_KEEPER_FIRST_DELAY)
+    while True:
+        try:
+            await keeper_tick(logger=logger)
+        except Exception as e:
+            logger.warning("账号主动续期异常: %s", e)
+        await asyncio.sleep(ACCOUNT_KEEPER_INTERVAL)
 
 
 def build_client(config, logger, on_event, data_dir):
@@ -172,6 +238,7 @@ async def async_main(config_path: Path) -> int:
         asyncio.create_task(config_watcher(), name="config"),
         asyncio.create_task(heartbeat(), name="heartbeat"),
         asyncio.create_task(scheduled_loop(), name="scheduled"),
+        asyncio.create_task(account_keeper(logger), name="account-keeper"),
     ]
     stop = asyncio.Event()
 

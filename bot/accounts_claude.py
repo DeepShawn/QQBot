@@ -170,7 +170,8 @@ def refresh(record: dict) -> dict | None:
             secrets_=(refresh_token,),
         )
     except account_core.AccountError as e:
-        if e.code in ("network", "timeout"):
+        # 限流/网络问题不能当成「登录过期」：交给 account_core 冷却并按 busy 处理
+        if e.code in ("network", "timeout", "busy"):
             raise
         return None
     try:
