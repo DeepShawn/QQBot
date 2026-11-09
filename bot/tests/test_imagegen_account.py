@@ -464,11 +464,13 @@ class ImageGenPluginTests(unittest.IsolatedAsyncioTestCase):
         await self.run_event(_event("帮我画一张"))
         self.assertEqual(self.generate_calls[0]["prompt"], "帮我")
 
-    async def test_trigger_only_no_prompt_ignored(self):
+    async def test_trigger_only_uses_default_prompt(self):
+        # 内置触发词兜底：纯触发词（如「使用画图功能」）用默认风景插画出图
         self.use_api_key()
         self.install_api()
         handled = await self.run_event(_event("画一张"))
-        self.assertFalse(handled)
+        self.assertTrue(handled)
+        self.assertEqual(self.generate_calls[0]["prompt"], "一张风景插画")
 
     async def test_group_requires_at(self):
         self.use_api_key()

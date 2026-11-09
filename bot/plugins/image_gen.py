@@ -22,6 +22,7 @@ from utils import at_seg, mentioned, strip_at, text_of, text_seg
 BUILTIN_TRIGGERS = (
     "使用画图功能",
     "用画图功能",
+    "生成一张图片",
     "生成一张图",
     "生成一张",
     "生成图片",
@@ -30,9 +31,8 @@ BUILTIN_TRIGGERS = (
     "来张",
     "画一张",
     "画张",
-    "画幅",
+    "画一个",
     "绘制",
-    "壁纸",
     "画个",
     "画只",
     "画一幅",
@@ -88,8 +88,8 @@ class Plugin(PluginBase):
             if rest:
                 return rest
             if trigger in BUILTIN_TRIGGERS:
-                # 纯触发词（如「使用画图功能」）：用整句当提示词也要出图
-                return text
+                # 纯触发词（如「使用画图功能」）：用默认风景插画也要出图
+                return "一张风景插画"
             return None
         return None
 

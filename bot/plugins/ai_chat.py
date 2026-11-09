@@ -47,7 +47,8 @@ LOCAL_PYTHON_NO_TOOL_HINT = (
 # 画图能力提示（追加到 system prompt）
 LOCAL_IMAGE_TOOL_HINT = (
     "【画图工具】用户要画图/生成图片/来一张图时，必须调用 generate_image 工具；"
-    "禁止用 ASCII、emoji、SVG 或代码块冒充图片，也不要把画图推回给用户。"
+    "绝对不要用 ASCII/emoji/代码画图，禁止用 SVG 或代码块冒充图片，"
+    "也不要把画图推回给用户。"
 )
 
 IMAGE_TOOL_NAME = "generate_image"
@@ -153,9 +154,13 @@ ROUTE_MAX_TOKENS = 300
 
 # 确定性的生图意图兜底（模型路由不可靠时直接走画图流程）
 IMAGE_INTENT_RE = re.compile(
-    r"(画张|画一张|来一张|来张|生成一张|生成图|生成图片|绘制|壁纸|"
-    r"使用画图|用画图|画图功能|帮我画|画个|画只|画一幅|画一下)"
+    r"(画张|画一张|画一个|画一幅|来一张|来张|生成[^，。！？\s]{0,6}图|绘制|"
+    r"插画|海报|壁纸|头像|风景图|logo|表情包|draw|illustration|image\s+of|"
+    r"使用画图|用画图|画图|帮我画|画个|画只|画一下)",
+    re.I,
 )
+# 用户只说「继续/再来」时，结合最近历史判断是不是接着画图
+CONTEXT_IMAGE_RE = re.compile(r"(继续|再来|再画|接着画|再生成|再来一张)")
 IMAGE_PROMPT_FROM_HISTORY_SYSTEM = (
     "你是生图提示词作者。请结合对话上下文，把用户这次的画图需求写成一句具体的中文生图提示词，"
     "包含主体、风格、构图、光线、画幅等细节；只输出提示词本身，"
@@ -974,12 +979,25 @@ class Plugin(PluginBase):
         return text[:400]
 
     @staticmethod
-    def _looks_like_image_request(text) -> bool:
-        """确定性判断：用户这句话是不是在要图片（画张/来一张/壁纸/使用画图功能等）。"""
+    def _looks_like_image_request(text, history=None) -> bool:
+        """确定性判断：用户这句话是不是在要图片（画张/来一张/壁纸/使用画图功能等）。
+
+        用户只说「继续/再来一张」时，结合最近历史里是否有画图需求来判断。
+        """
         raw = str(text or "").strip()
         if not raw:
             return False
-        return bool(IMAGE_INTENT_RE.search(raw))
+        if IMAGE_INTENT_RE.search(raw):
+            return True
+        if history and CONTEXT_IMAGE_RE.search(raw):
+            for item in list(history)[-6:]:
+                if (
+                    isinstance(item, dict)
+                    and item.get("role") == "user"
+                    and IMAGE_INTENT_RE.search(str(item.get("content") or ""))
+                ):
+                    return True
+        return False
 
     async def _write_image_prompt_from_history(
         self, cfg: dict, history: list, user_text: str
@@ -1032,8 +1050,18 @@ class Plugin(PluginBase):
         )
         if not image_prompt:
             image_prompt = str(prompt or "").strip()
-        if not image_prompt:
-            return None
+            if not IMAGE_INTENT_RE.search(image_prompt):
+                # 用户只说「继续」：沿用历史里最近一条画图需求
+                for item in reversed(list(history or [])[-6:]):
+                    if (
+                        isinstance(item, dict)
+                        and item.get("role") == "user"
+                        and IMAGE_INTENT_RE.search(str(item.get("content") or ""))
+                    ):
+                        image_prompt = str(item.get("content") or "").strip()
+                        break
+            if not image_prompt:
+                image_prompt = "一张风景插画"
         size = str(image_cfg.get("size") or "").strip()
         if size not in IMAGE_SIZES:
             size = "1024x1024"
@@ -1051,7 +1079,7 @@ class Plugin(PluginBase):
             f"【工具执行结果】generate_image：{output}\n"
             "图片已发送。请用简短中文告诉用户画好了，并用一两句描述画面；"
             "不要重复提示词原文，也不要说自己不能画图；"
-            "禁止用 ASCII、emoji、SVG 或代码块冒充图片。"
+            "绝对不要用 ASCII/emoji/代码画图，禁止用 SVG 或代码块冒充图片。"
         )
         final_messages = list(messages) + [
             {"role": "system", "content": instruction}
@@ -1510,7 +1538,7 @@ class Plugin(PluginBase):
             elif (
                 not native_supported
                 and image_ok
-                and self._looks_like_image_request(prompt)
+                and self._looks_like_image_request(prompt, history_messages)
             ):
                 # 生图意图确定性兜底：路由模型不可靠时直接走画图流程，
                 # 避免把「画张风景图」答成 ASCII/emoji 文字画。

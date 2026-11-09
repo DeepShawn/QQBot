@@ -385,7 +385,7 @@ class AiImageToolTests(unittest.IsolatedAsyncioTestCase):
         names = [tool["function"]["name"] for tool in tools]
         self.assertIn("generate_image", names)
         spec = next(t for t in tools if t["function"]["name"] == "generate_image")
-        self.assertIn("不要用代码", spec["function"]["description"])
+        self.assertIn("禁止用 ASCII", spec["function"]["description"])
         self.assertIn("prompt", spec["function"]["parameters"]["properties"])
         self.assertIn("size", spec["function"]["parameters"]["properties"])
         self.assertEqual(
