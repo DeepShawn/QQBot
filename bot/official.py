@@ -600,6 +600,10 @@ class OfficialClient:
             if not isinstance(item, dict):
                 continue
             url = str(item.get("url") or "").strip()
+            if url.startswith("//"):
+                url = "https:" + url
+            elif url and not url.startswith(("http://", "https://")) and "." in url.split("/")[0]:
+                url = "https://" + url  # 官方附件地址有时不带协议头
             if not url.startswith(("http://", "https://")):
                 continue
             mime = str(item.get("content_type") or "").lower()
