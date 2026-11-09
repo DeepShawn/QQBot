@@ -19,6 +19,13 @@ DEFAULTS = {
         "log_level": "INFO",
         "self_id": 0,
     },
+    # 官方 QQ 机器人通道（q.qq.com）；enabled=true 时 main.py 改用它，需要重启生效
+    "official": {
+        "enabled": False,
+        "app_id": "",
+        "app_secret": "",
+        "sandbox": False,
+    },
     # 防封（降低风险）模式：发送延迟 / 全局限频 / 群白名单 / 链接与敏感词过滤
     "safety": {
         "low_risk": True,

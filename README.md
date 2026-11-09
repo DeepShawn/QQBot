@@ -627,6 +627,23 @@ curl -s http://127.0.0.1:8080/api/update/bot/status   # 看进度
 
 对应接口（管理台 8080）：`/api/groups`、`/api/messages?group=&count=`、`/api/files`、`/api/files/get?name=`。
 
+## 连接方式：OneBot（NapCat）或官方 QQ 机器人
+
+默认走 OneBot/NapCat（手机上的 LinuxQQ）。App 更多 → 工具 →「官方机器人」可切换到 **q.qq.com 官方机器人**：
+
+1. 去 [q.qq.com](https://q.qq.com) 注册机器人，拿 **AppID / AppSecret**，把机器人拉进群
+2. App 填 AppID、AppSecret（沙箱可开），打开「使用官方 QQ 机器人通道」
+3. 概览页「彻底关闭」→「开启服务」生效（切换通道要重启）
+
+官方通道限制（平台限制，无法绕过）：
+- **只能被动回复**：主动消息 2025-04 已下线 → 定时消息、主动推送都发不出去
+- 群里只能收到 **@ 机器人** 的消息，读不到普通群聊
+- 没有群成员查询 / 禁言 / 踢人 / 撤回 / 消息历史接口 → 群管类功能不可用
+- 被动回复窗口：群 5 分钟、单聊 60 分钟，每条消息最多回 5 条
+- 图片走「上传 file_info + msg_type=7」，群文件不支持
+
+想继续用定时消息/群管，就把「官方机器人通道」关掉，回到 NapCat（建议小号）+ 防封模式。
+
 ## 改代码不用重打运行环境
 
 独立 App 启动时会检查手机存储里的 `Download/DSH-Go/qqbot-src/`：

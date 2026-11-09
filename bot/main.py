@@ -25,6 +25,11 @@ from dispatcher import Dispatcher  # noqa: E402
 from onebot import OneBotClient  # noqa: E402
 import scheduled  # noqa: E402
 
+try:  # 官方通道可选：导入失败不影响老的 OneBot 通道
+    from official import OfficialClient  # noqa: E402
+except Exception:  # pragma: no cover - 运行环境缺少依赖时
+    OfficialClient = None  # type: ignore[assignment]
+
 from plugins import (  # noqa: E402
     ai_chat,
     commands,
@@ -50,6 +55,40 @@ def setup_logging(level: str, log_file: Path) -> logging.Logger:
     fh.setFormatter(fmt)
     logger.addHandler(fh)
     return logger
+
+
+def build_client(config, logger, on_event, data_dir):
+    """按 config 选择连接通道 -> (client, "official"|"onebot")。"""
+    official_cfg = config.get("official", default={}) or {}
+    app_id = str(official_cfg.get("app_id") or "").strip()
+    app_secret = str(official_cfg.get("app_secret") or "").strip()
+    if (
+        OfficialClient is not None
+        and official_cfg.get("enabled")
+        and app_id
+        and app_secret
+    ):
+        api = OfficialClient(
+            app_id=app_id,
+            app_secret=app_secret,
+            sandbox=bool(official_cfg.get("sandbox", False)),
+            logger=logger,
+            on_event=on_event,
+            request_timeout=float(official_cfg.get("request_timeout", 20)),
+            data_dir=data_dir,
+        )
+        api.reconnect_seconds = float(official_cfg.get("reconnect_seconds", 5))
+        return api, "official"
+    ob = config.get("onebot", default={}) or {}
+    api = OneBotClient(
+        url=ob.get("ws_url", "ws://127.0.0.1:3001"),
+        token=ob.get("access_token", ""),
+        logger=logger,
+        on_event=on_event,
+        request_timeout=float(ob.get("request_timeout", 20)),
+    )
+    api.reconnect_seconds = float(ob.get("reconnect_seconds", 5))
+    return api, "onebot"
 
 
 async def async_main(config_path: Path) -> int:
@@ -80,15 +119,7 @@ async def async_main(config_path: Path) -> int:
     ):
         dispatcher.register(module.Plugin(ctx))
 
-    ob = config.get("onebot", default={}) or {}
-    api = OneBotClient(
-        url=ob.get("ws_url", "ws://127.0.0.1:3001"),
-        token=ob.get("access_token", ""),
-        logger=logger,
-        on_event=dispatcher.dispatch,
-        request_timeout=float(ob.get("request_timeout", 20)),
-    )
-    api.reconnect_seconds = float(ob.get("reconnect_seconds", 5))
+    api, channel = build_client(config, logger, dispatcher.dispatch, data_dir)
     ctx.api = api
 
     async def config_watcher():
@@ -102,7 +133,11 @@ async def async_main(config_path: Path) -> int:
 
     logger.info("================ 机器人启动 ================")
     logger.info("配置：%s", config_path)
-    logger.info("OneBot：%s", api.url)
+    logger.info(
+        "通道：%s（%s）",
+        api.url,
+        "官方 QQ 机器人" if channel == "official" else "OneBot/NapCat",
+    )
 
     async def heartbeat():
         """给管理台（admin/server.py）写运行状态。"""

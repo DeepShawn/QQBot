@@ -61,6 +61,7 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var showSkills by remember { mutableStateOf(false) }
     var showScheduled by remember { mutableStateOf(false) }
     var showSafety by remember { mutableStateOf(false) }
+    var showOfficial by remember { mutableStateOf(false) }
 
     // 全屏管理页：提前返回，页面自己带「返回更多」
     if (showKeywords) {
@@ -85,6 +86,10 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     }
     if (showSafety) {
         SafetyPage(padding, scrollBehavior) { showSafety = false }
+        return
+    }
+    if (showOfficial) {
+        OfficialBotPage(padding, scrollBehavior) { showOfficial = false }
         return
     }
 
@@ -411,6 +416,11 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 title = "防封模式",
                 summary = "随机延迟、发送限频、群白名单、隐藏链接、敏感词",
                 onClick = { showSafety = true },
+            )
+            ArrowPreference(
+                title = "官方机器人",
+                summary = "用 q.qq.com 官方机器人通道（不登个人号），注意平台限制",
+                onClick = { showOfficial = true },
             )
             ArrowPreference(
                 title = "运行 Python 代码",

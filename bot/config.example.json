@@ -11,6 +11,12 @@
     "log_level": "INFO",
     "self_id": 0
   },
+  "official": {
+    "enabled": false,
+    "app_id": "",
+    "app_secret": "",
+    "sandbox": false
+  },
   "safety": {
     "low_risk": true,
     "reply_delay_min": 1.0,
