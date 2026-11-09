@@ -169,6 +169,12 @@ class NamesTranslateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event["sender"]["nickname"], "小明")
         self.assertEqual(event["sender"]["user_id"], event["user_id"])
 
+    async def test_unknown_user_falls_back(self):
+        group_event = self.client._translate_event("GROUP_AT_MESSAGE_CREATE", GROUP_D)
+        self.assertEqual(group_event["sender"]["nickname"], "群友")
+        c2c_event = self.client._translate_event("C2C_MESSAGE_CREATE", C2C_D)
+        self.assertEqual(c2c_event["sender"]["nickname"], "朋友")
+
     async def test_c2c_event_uses_nickname(self):
         official.set_nickname(self.root, "USER-OPENID-1", "小红")
         event = self.client._translate_event("C2C_MESSAGE_CREATE", C2C_D)
@@ -251,7 +257,18 @@ class SetNameCommandTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_official_channel_hint(self):
         await self.plugin.on_event(_event("/我叫 小明"))
-        self.assertIn("不是官方", self.ctx.replies[-1])
+        self.assertIn("只在官方通道", self.ctx.replies[-1])
+
+    async def test_name_max_length_20(self):
+        await self.plugin.on_event(self.official_event("/我叫 " + "名" * 20))
+        self.assertEqual(official.get_nickname(self.root, "M1"), "名" * 20)
+        await self.plugin.on_event(self.official_event("/我叫 " + "名" * 21))
+        self.assertIn("太长", self.ctx.replies[-1])
+
+    async def test_empty_shows_current_name(self):
+        await self.plugin.on_event(self.official_event("/我叫 小明"))
+        await self.plugin.on_event(self.official_event("/我叫"))
+        self.assertIn("小明", self.ctx.replies[-1])
 
     async def test_help_mentions_set_name(self):
         self.ctx._admins = ["10001"]

@@ -277,18 +277,12 @@ class Plugin(PluginBase):
     # ---------- /我叫 ----------
     async def cmd_set_name(self, event, args):
         """官方通道里绑定/修改自己的昵称（任何成员可用）。"""
-        name = " ".join(str(item) for item in (args or [])).strip()
-        if not name:
-            await self.ctx.reply(event, "用法：/我叫 <名字>（1-24 个字符）")
-            return
-        if len(name) > 24:
-            await self.ctx.reply(event, "名字太长了，最多 24 个字符。")
-            return
-        if any(ch in name for ch in "\r\n\t"):
-            await self.ctx.reply(event, "名字里不能有换行/制表符。")
-            return
         official_meta = event.get("_official") or {}
-        kind = str(official_meta.get("kind") or "") if isinstance(official_meta, dict) else ""
+        kind = (
+            str(official_meta.get("kind") or "")
+            if isinstance(official_meta, dict)
+            else ""
+        )
         openid = ""
         if kind == "group":
             openid = str(official_meta.get("member_openid") or "")
@@ -296,8 +290,25 @@ class Plugin(PluginBase):
             openid = str(official_meta.get("user_openid") or "")
         if not openid:
             await self.ctx.reply(
-                event, "当前不是官方 QQ 机器人通道，不需要绑定名字。"
+                event, "这个命令只在官方通道可用（OneBot 模式用平台昵称）。"
             )
+            return
+        name = " ".join(str(item) for item in (args or [])).strip()
+        if not name:
+            current = official.get_nickname(self.ctx.data_dir, openid)
+            if current:
+                await self.ctx.reply(
+                    event,
+                    f"你现在的名字是「{current}」，改名字：/我叫 <新名字>",
+                )
+            else:
+                await self.ctx.reply(event, "还没有绑定名字。用法：/我叫 <名字>（1-20 个字符）")
+            return
+        if len(name) > 20:
+            await self.ctx.reply(event, "名字太长了，最多 20 个字符。")
+            return
+        if any(ch in name for ch in "\r\n\t"):
+            await self.ctx.reply(event, "名字里不能有换行/制表符。")
             return
         try:
             saved = official.set_nickname(self.ctx.data_dir, openid, name)
