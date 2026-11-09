@@ -497,7 +497,7 @@ class OfficialClient:
                 ],
                 "raw_message": content,
                 "time": timestamp,
-                "sender": {"user_id": user_id, "nickname": ""},
+                "sender": {"user_id": user_id, "nickname": "群友"},
                 "_official": {
                     "kind": "group",
                     "group_openid": group_openid,
@@ -535,7 +535,7 @@ class OfficialClient:
                 "message": segments,
                 "raw_message": content,
                 "time": timestamp,
-                "sender": {"user_id": user_id, "nickname": ""},
+                "sender": {"user_id": user_id, "nickname": "朋友"},
                 "_official": {
                     "kind": "c2c",
                     "user_openid": user_openid,
