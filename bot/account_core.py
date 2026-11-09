@@ -38,7 +38,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 
 log = logging.getLogger("account_core")
@@ -884,6 +884,8 @@ class CallbackServer:
 
         class _Handler(BaseHTTPRequestHandler):
             server_version = "QQBotOAuth/1.0"
+            # 浏览器会预连接空闲 socket；不设超时的话单线程服务会一直卡在它身上，真正的回调进不来
+            timeout = 10
 
             def log_message(self, fmt, *args):  # 不打印访问日志（URL 里有授权码）
                 return
@@ -895,7 +897,7 @@ class CallbackServer:
                 owner._handle(self)
 
         try:
-            self._httpd = HTTPServer((str(host), int(port)), _Handler)
+            self._httpd = ThreadingHTTPServer((str(host), int(port)), _Handler)
         except OSError as e:
             raise AccountError(
                 "generic", "本地回调端口被占用，改用粘贴方式"
