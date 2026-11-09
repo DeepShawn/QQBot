@@ -841,7 +841,7 @@ class OfficialClient:
                 except (TypeError, ValueError):
                     user_openid = None
                 if user_openid:
-                    mentions += f"<qqbot-at-user id=\"{user_openid}\" /> "
+                    pass  # 官方群消息不支持 @ 标记，原样显示成乱码；改由 AI 用昵称称呼
         texts = mentions + _strip_raw_mentions("".join(
             str((seg.get("data") or {}).get("text") or "")
             for seg in segments
