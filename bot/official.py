@@ -818,7 +818,21 @@ class OfficialClient:
             raise OfficialError("回复内容为空")
         if kind == "group" and any(seg.get("type") == "file" for seg in segments):
             raise OfficialError("官方通道群聊不支持发文件")
-        texts = "".join(
+        mentions = ""
+        if kind == "group":
+            for seg in segments:
+                if seg.get("type") != "at":
+                    continue
+                qq = str((seg.get("data") or {}).get("qq") or "").strip()
+                if not qq or qq == str(self.self_id):
+                    continue
+                try:
+                    user_openid = self._ids.reverse("user", int(qq))
+                except (TypeError, ValueError):
+                    user_openid = None
+                if user_openid:
+                    mentions += f"<@{user_openid}> "
+        texts = mentions + "".join(
             str((seg.get("data") or {}).get("text") or "")
             for seg in segments
             if seg.get("type") == "text"
