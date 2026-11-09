@@ -34,6 +34,12 @@ DEFAULT_MODEL = MODELS[0]
 CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 AUTHORIZE_URL = "https://claude.ai/oauth/authorize"
 TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+# platform.claude.com 对部分出口 IP 会直接 429；同一个 OAuth 服务在 api.anthropic.com
+# 等域名上没有被限流，主地址 429 时依次回退
+TOKEN_FALLBACK_URLS = (
+    "https://api.anthropic.com/v1/oauth/token",
+    "https://console.anthropic.com/v1/oauth/token",
+)
 CALLBACK_HOST = "127.0.0.1"
 CALLBACK_PORT = 53692
 CALLBACK_PATH = "/callback"
@@ -75,6 +81,22 @@ def _record_from_token(data: dict, old_refresh: str = "") -> dict:
         "account": "",
         "extra": {},
     }
+
+
+def _token_request(payload: dict, secrets_: tuple) -> dict:
+    """POST token 接口；主地址被限流（busy）时依次试备用域名。"""
+    last: account_core.AccountError | None = None
+    for url in (TOKEN_URL,) + TOKEN_FALLBACK_URLS:
+        try:
+            return account_core.http_json(
+                url, payload, timeout=TOKEN_TIMEOUT, label="登录服务", secrets_=secrets_
+            )
+        except account_core.AccountError as e:
+            if e.code != "busy":
+                raise
+            last = e
+    assert last is not None
+    raise last
 
 
 def begin(attempt) -> dict:
@@ -131,8 +153,7 @@ def begin(attempt) -> dict:
                 raise account_core.AccountError("generic", "没有拿到授权码，再试一次")
 
         attempt.set_phase("starting", "正在完成登录…")
-        data = account_core.http_json(
-            TOKEN_URL,
+        data = _token_request(
             {
                 "grant_type": "authorization_code",
                 "client_id": CLIENT_ID,
@@ -141,9 +162,7 @@ def begin(attempt) -> dict:
                 "redirect_uri": redirect_uri,
                 "code_verifier": verifier,
             },
-            timeout=TOKEN_TIMEOUT,
-            label="登录服务",
-            secrets_=(code, verifier),
+            (code, verifier),
         )
         record = _record_from_token(data)
         return record
@@ -158,16 +177,13 @@ def refresh(record: dict) -> dict | None:
     if not refresh_token:
         return None
     try:
-        data = account_core.http_json(
-            TOKEN_URL,
+        data = _token_request(
             {
                 "grant_type": "refresh_token",
                 "client_id": CLIENT_ID,
                 "refresh_token": refresh_token,
             },
-            timeout=TOKEN_TIMEOUT,
-            label="登录服务",
-            secrets_=(refresh_token,),
+            (refresh_token,),
         )
     except account_core.AccountError as e:
         # 限流/网络问题不能当成「登录过期」：交给 account_core 冷却并按 busy 处理
