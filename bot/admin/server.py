@@ -241,6 +241,7 @@ def build_state() -> dict:
             "running": running,
             "pid": pid if running else None,
             "connected": connected,
+            "channel": runtime.get("channel") or "",
             "self_id": runtime.get("self_id") or uin or "",
             "uptime_seconds": int(time.time() - started_at) if running and started_at else 0,
         },
