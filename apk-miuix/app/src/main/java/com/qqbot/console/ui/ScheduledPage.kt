@@ -17,6 +17,7 @@ import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 
 private const val SCHEDULED_INTERVAL_DEFAULT = 301
+private const val QUOTA_INTERVAL_DEFAULT = 301
 private val TARGET_TYPES = listOf("auto", "private", "group")
 private val TARGET_LABELS = listOf(
     "自动（最近私聊 / 管理员）",
@@ -36,6 +37,7 @@ fun ScheduledMessagePage(padding: PaddingValues, scrollBehavior: ScrollBehavior,
     val targetId = Store.int("config", "plugins", "scheduled", "target_id", def = 0)
     val useImage = Store.bool("config", "plugins", "scheduled", "use_image", def = true)
     val imageSize = cfg.optStr("image_size").ifBlank { IMAGE_SIZES.first() }
+    val quotaInterval = Store.int("config", "plugins", "quota_refresh", "interval_minutes", def = QUOTA_INTERVAL_DEFAULT)
     var showTargetEditor by remember { mutableStateOf(targetType != "auto") }
 
     fun saveTargetType(value: String) {
@@ -126,6 +128,29 @@ fun ScheduledMessagePage(padding: PaddingValues, scrollBehavior: ScrollBehavior,
                     },
                 )
             }
+        }
+
+        group("AI 限额刷新") {
+            ConfigSwitch(
+                "自动刷新 5 小时限额",
+                "每隔一段时间给 Claude / ChatGPT 各发一句「你好」，刷新用量窗口（不往 QQ 发消息）",
+                "plugins", "quota_refresh", "enabled", default = true,
+            )
+            EditPreference(
+                "刷新间隔（分钟）",
+                quotaInterval.toString(),
+                summary = "默认 301 分钟（5 小时 01 分），范围 60–1440",
+                numeric = true,
+            ) {
+                it.toIntOrNull()?.let { v ->
+                    Store.patch(
+                        patchOf("plugins", "quota_refresh", "interval_minutes", value = v.coerceIn(60, 1440)),
+                        "限额刷新间隔已改为 ${v.coerceIn(60, 1440)} 分钟",
+                    )
+                }
+            }
+            Hint("仅对 Claude / ChatGPT 两个已登录账号生效：每隔这么久自动发一条「你好」刷新用量窗口，不往 QQ 发消息。")
+            Hint("需要先在「AI 账号」里连好 Claude / ChatGPT；管理员也可以用 /刷新限额 立即执行一次。")
         }
 
         item { Hint("到点会用语言模型生成问候（按时间说早上好 / 下午好等）+ 画图模型生成配图，合成一条消息发出；顺便刷新 5 小时额度。") }

@@ -12,8 +12,8 @@ android {
         applicationId "com.qqbot.console"
         minSdk 26
         targetSdk 28            // 允许从 App 私有目录 exec proot（Termux 同款做法），只用于侧载
-        versionCode 28
-        versionName "3.25"
+        versionCode 29
+        versionName "3.26"
         ndk { abiFilters 'arm64-v8a' }
     }
 
