@@ -1,9 +1,11 @@
 """机器人上下文：配置、日志、数据目录、发消息的便捷方法。"""
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
+import safety
 from utils import at_seg, fmt, text_seg
 
 
@@ -36,11 +38,39 @@ class Context:
         return str(user_id) in {str(a) for a in admins}
 
     # ---------- 发消息 ----------
+    async def _low_risk_message(self, message, *, is_group: bool, group_id=None):
+        """防封模式处理：群白名单 → 全局限频 → 随机延迟 → 内容过滤。
+
+        返回处理后的 message；返回 None 表示这条消息应丢弃（白名单/限频）。
+        非 low_risk 时直接原样返回，不做任何处理。
+        """
+        data = self.cfg if isinstance(self.cfg, dict) else {}
+        raw = data.get("safety") or {}
+        if not safety.is_low_risk(raw):
+            return message
+        conf = safety.normalize(raw)
+        if is_group and not safety.group_allowed(group_id, conf):
+            self.log.info("防封模式：群 %s 不在白名单，已跳过发送", group_id)
+            return None
+        if not await safety.wait_slot(conf):
+            self.log.warning("防封模式：发送频率超出上限，丢弃一条消息")
+            return None
+        delay = safety.reply_delay(conf)
+        if delay > 0:
+            await asyncio.sleep(delay)
+        return safety.sanitize_message(message, is_group=is_group, cfg=conf)
+
     async def send_private(self, user_id, message):
-        return await self.api.call("send_private_msg", user_id=int(user_id), message=message)
+        prepared = await self._low_risk_message(message, is_group=False)
+        if prepared is None:
+            return None
+        return await self.api.call("send_private_msg", user_id=int(user_id), message=prepared)
 
     async def send_group(self, group_id, message):
-        return await self.api.call("send_group_msg", group_id=int(group_id), message=message)
+        prepared = await self._low_risk_message(message, is_group=True, group_id=group_id)
+        if prepared is None:
+            return None
+        return await self.api.call("send_group_msg", group_id=int(group_id), message=prepared)
 
     def _with_at(self, message, at_qq):
         msg = message if isinstance(message, list) else [text_seg(message)]

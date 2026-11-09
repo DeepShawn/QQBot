@@ -19,6 +19,17 @@ DEFAULTS = {
         "log_level": "INFO",
         "self_id": 0,
     },
+    # 防封（降低风险）模式：发送延迟 / 全局限频 / 群白名单 / 链接与敏感词过滤
+    "safety": {
+        "low_risk": True,
+        "reply_delay_min": 1.0,
+        "reply_delay_max": 3.0,
+        "max_per_minute": 20,
+        "max_per_hour": 300,
+        "block_links_group": True,
+        "banned_words": [],
+        "group_whitelist": [],
+    },
     "plugins": {
         "keyword": {
             "enabled": True,

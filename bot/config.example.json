@@ -11,6 +11,16 @@
     "log_level": "INFO",
     "self_id": 0
   },
+  "safety": {
+    "low_risk": true,
+    "reply_delay_min": 1.0,
+    "reply_delay_max": 3.0,
+    "max_per_minute": 20,
+    "max_per_hour": 300,
+    "block_links_group": true,
+    "banned_words": [],
+    "group_whitelist": []
+  },
   "plugins": {
     "keyword": {
       "enabled": true,

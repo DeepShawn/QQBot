@@ -60,6 +60,7 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var showTasks by remember { mutableStateOf(false) }
     var showSkills by remember { mutableStateOf(false) }
     var showScheduled by remember { mutableStateOf(false) }
+    var showSafety by remember { mutableStateOf(false) }
 
     // 全屏管理页：提前返回，页面自己带「返回更多」
     if (showKeywords) {
@@ -80,6 +81,10 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     }
     if (showScheduled) {
         ScheduledMessagePage(padding, scrollBehavior) { showScheduled = false }
+        return
+    }
+    if (showSafety) {
+        SafetyPage(padding, scrollBehavior) { showSafety = false }
         return
     }
 
@@ -401,6 +406,11 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 title = "定时消息",
                 summary = "每隔一段时间自动发一条问候（语言模型 + 画图模型）",
                 onClick = { showScheduled = true },
+            )
+            ArrowPreference(
+                title = "防封模式",
+                summary = "随机延迟、发送限频、群白名单、隐藏链接、敏感词",
+                onClick = { showSafety = true },
             )
             ArrowPreference(
                 title = "运行 Python 代码",
