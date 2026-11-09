@@ -147,6 +147,7 @@ async def async_main(config_path: Path) -> int:
             payload.update(
                 {
                     "connected": api.connected.is_set(),
+                    "channel": channel,
                     "self_id": ctx.self_id or "",
                     "updated_at": time.time(),
                 }

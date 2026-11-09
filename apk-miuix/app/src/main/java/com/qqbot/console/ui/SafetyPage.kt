@@ -34,7 +34,8 @@ private fun splitNumbers(s: String): JSONArray {
 @Composable
 fun SafetyPage(padding: PaddingValues, scrollBehavior: ScrollBehavior, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
-    val safety = Store.obj("safety") ?: JSONObject()
+    // 配置在 state.config 下（/api/state 的 config），不是 state 顶层
+    val safety = Store.cfg("safety") ?: JSONObject()
 
     val delayMin = safety.optDouble("reply_delay_min", 1.0)
     val delayMax = safety.optDouble("reply_delay_max", 3.0)

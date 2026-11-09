@@ -20,7 +20,8 @@ import top.yukonga.miuix.kmp.theme.MiuixTheme
 /** 官方 QQ 机器人通道：用 q.qq.com 的官方接口，不登个人号。 */
 @Composable
 fun OfficialBotPage(padding: PaddingValues, scrollBehavior: ScrollBehavior, onBack: () -> Unit) {
-    val official = Store.obj("official") ?: JSONObject()
+    // 配置在 state.config 下（/api/state 的 config），不是 state 顶层
+    val official = Store.cfg("official") ?: JSONObject()
     val enabled = official.optBoolean("enabled", false)
     val bot = Store.obj("bot")
     val connected = bot?.optBoolean("connected") == true
@@ -70,7 +71,16 @@ fun OfficialBotPage(padding: PaddingValues, scrollBehavior: ScrollBehavior, onBa
                 else -> "未连接" to Warn
             }
             StatusRow("机器人连接", connText, connColor)
-            InfoRow("当前通道", if (enabled) "官方 QQ 机器人" else "个人号（NapCat）")
+
+            // 后端把实际在用的通道写进 runtime.json（state.bot.channel）；
+            // 缺失时只能按配置猜，并提示要重启才生效
+            val channel = bot?.optStr("channel").orEmpty()
+            val channelText = when (channel) {
+                "official" -> "官方 QQ 机器人"
+                "onebot" -> "个人号（NapCat）"
+                else -> if (enabled) "官方 QQ 机器人（待重启）" else "个人号（NapCat）"
+            }
+            InfoRow("当前通道", channelText)
             InfoRow("生效方式", "切换通道后需重启服务")
         }
 
