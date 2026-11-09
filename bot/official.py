@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import base64
 import json
 import re
@@ -304,6 +305,9 @@ class OfficialClient:
         )
         self._data_dir = Path(data_path)
         self._ids = _IdMap(self._data_dir / STATE_FILE_NAME)
+        # 最近群消息缓存：给「引用消息」和「先发图再 @」用（官方没有 get_msg 接口）
+        self._msg_cache: "collections.OrderedDict[str, dict]" = collections.OrderedDict()
+        self._msg_seq = 900_000_000
 
     # ---------- 属性 ----------
     @property
@@ -604,6 +608,106 @@ class OfficialClient:
             segments.append({"type": "image", "data": {"file": url, "url": url}})
         return segments
 
+    # ---------- 消息缓存 / 引用 ----------
+    MSG_CACHE_SIZE = 300
+    RECENT_IMAGE_SECONDS = 180
+
+    def _cache_message(self, entry: dict) -> str:
+        """存一条消息，返回数字 id（插件里 get_msg 用 int(id)）。"""
+        self._msg_seq += 1
+        key = str(self._msg_seq)
+        entry = dict(entry)
+        entry["message_id"] = key
+        entry.setdefault("cached_at", time.time())
+        self._msg_cache[key] = entry
+        while len(self._msg_cache) > self.MSG_CACHE_SIZE:
+            self._msg_cache.popitem(last=False)
+        return key
+
+    def _quote_segments(self, data: dict) -> tuple[list[dict], str]:
+        """从 msg_elements / message_reference 里取被引用消息的图片和文字。"""
+        images: list[dict] = []
+        texts: list[str] = []
+        elements = data.get("msg_elements")
+        if isinstance(elements, list):
+            try:
+                self.log.info(
+                    "官方引用元素 n=%d keys=%s",
+                    len(elements),
+                    [sorted(e.keys()) for e in elements if isinstance(e, dict)][:4],
+                )
+            except Exception:
+                pass
+            stack = list(elements)
+            while stack:
+                item = stack.pop(0)
+                if not isinstance(item, dict):
+                    continue
+                images += self._attachment_images(item)
+                txt = _strip_raw_mentions(str(item.get("content") or ""))
+                if txt:
+                    texts.append(txt)
+                for k in ("msg_elements", "elements", "children"):
+                    if isinstance(item.get(k), list):
+                        stack.extend(item[k])
+        ref = data.get("message_reference")
+        if isinstance(ref, dict):
+            rid = str(ref.get("message_id") or "")
+            for entry in reversed(self._msg_cache.values()):
+                if entry.get("official_msg_id") == rid:
+                    for seg in entry.get("message") or []:
+                        if seg.get("type") == "image":
+                            images.append(seg)
+                        elif seg.get("type") == "text":
+                            t = str((seg.get("data") or {}).get("text") or "").strip()
+                            if t:
+                                texts.append(t)
+                    break
+        return images, "\n".join(texts).strip()
+
+    def _recent_image_entry(self, group_openid: str, member_openid: str) -> str | None:
+        now = time.time()
+        for key, entry in reversed(self._msg_cache.items()):
+            if now - float(entry.get("cached_at") or 0) > self.RECENT_IMAGE_SECONDS:
+                break
+            if entry.get("group_openid") != group_openid or entry.get("member_openid") != member_openid:
+                continue
+            if any(seg.get("type") == "image" for seg in entry.get("message") or []):
+                return key
+        return None
+
+    def _enrich_group_event(self, event: dict, data: dict, addressed: bool) -> dict:
+        """缓存群消息；@ 机器人时把引用内容 / 刚发的图片接成 reply 段，插件走 get_msg 读取。"""
+        meta = event.get("_official") or {}
+        own = [seg for seg in event.get("message") or [] if seg.get("type") in ("text", "image")]
+        self._cache_message(
+            {
+                "message": own,
+                "sender": dict(event.get("sender") or {}),
+                "group_openid": meta.get("group_openid"),
+                "member_openid": meta.get("member_openid"),
+                "official_msg_id": meta.get("msg_id"),
+                "time": event.get("time"),
+            }
+        )
+        if not addressed:
+            return event
+        q_images, q_text = self._quote_segments(data)
+        reply_id = None
+        if q_images or q_text:
+            segs = ([{"type": "text", "data": {"text": q_text}}] if q_text else []) + q_images
+            reply_id = self._cache_message(
+                {"message": segs, "sender": {"user_id": 0, "nickname": "被引用的消息"}}
+            )
+            self.log.info("官方引用内容 图片=%d 文字长度=%d", len(q_images), len(q_text))
+        elif not any(seg.get("type") == "image" for seg in own):
+            reply_id = self._recent_image_entry(meta.get("group_openid"), meta.get("member_openid"))
+            if reply_id:
+                self.log.info("官方：@ 时自动带上该成员刚发的图片 id=%s", reply_id)
+        if reply_id:
+            event["message"] = [{"type": "reply", "data": {"id": reply_id}}] + list(event["message"])
+        return event
+
     # ---------- 事件翻译 ----------
     def _translate_event(self, event_type: str, data: dict) -> dict | None:
         if not isinstance(data, dict):
@@ -633,7 +737,7 @@ class OfficialClient:
             if not is_at_event:
                 mentioned_bot, bot_mark_ids = self._bot_mentioned(data, content)
                 if not mentioned_bot:
-                    return {
+                    return self._enrich_group_event({
                         "post_type": "message",
                         "message_type": "group",
                         "self_id": self.self_id,
@@ -655,14 +759,14 @@ class OfficialClient:
                             "member_openid": member_openid,
                             "msg_id": msg_id,
                         },
-                    }
+                    }, data, False)
                 # 全量群消息里 @ 是写在正文里的（<@id> / <@!id>），去掉机器人的标记再交给插件
                 def _strip(m):
                     return " " if m.group(1) in bot_mark_ids else m.group(0)
                 content = re.sub(r"<@!?([^>\s]+)>", _strip, content)
                 content = " ".join(content.split())
             content = _strip_raw_mentions(content) or content
-            return {
+            return self._enrich_group_event({
                 "post_type": "message",
                 "message_type": "group",
                 "self_id": self.self_id,
@@ -689,7 +793,7 @@ class OfficialClient:
                     "member_openid": member_openid,
                     "msg_id": msg_id,
                 },
-            }
+            }, data, True)
         if event_type == "C2C_MESSAGE_CREATE":
             user_openid = str(
                 author.get("user_openid") or data.get("user_openid") or ""
@@ -865,7 +969,24 @@ class OfficialClient:
     # ---------- 对外接口 ----------
     async def call(self, action: str, **params):
         if action in ("send_group_msg", "send_private_msg"):
-            return await self._send_passive(action, params)
+            result = await self._send_passive(action, params)
+            try:
+                segs = [
+                    seg for seg in _normalize_segments(params.get("message"))
+                    if seg.get("type") in ("text", "image")
+                ]
+                self._cache_message(
+                    {"message": segs, "sender": {"user_id": self.self_id, "nickname": "我"}}
+                )
+            except Exception:
+                pass
+            return result
+        if action == "get_msg":
+            key = str(params.get("message_id") or "")
+            entry = self._msg_cache.get(key)
+            if entry is None:
+                raise OfficialError("官方通道不支持读取这条消息（只缓存最近的群消息）")
+            return dict(entry)
         raise OfficialError(f"官方通道不支持 {action}")
 
     async def wait_ready(self, timeout: float = 30.0):
