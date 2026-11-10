@@ -634,7 +634,10 @@ class OfficialClient:
             if not url.startswith(("http://", "https://")):
                 continue
             mime = str(item.get("content_type") or "").lower()
-            if mime and not mime.startswith("image"):
+            name = str(item.get("filename") or item.get("name") or url).lower()
+            looks_image = mime.startswith("image") or (not mime and name.rsplit("?", 1)[0].endswith(
+                (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".heic", ".heif")))
+            if not looks_image:
                 continue
             segments.append({"type": "image", "data": {"file": url, "url": url}})
         return segments

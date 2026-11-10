@@ -235,6 +235,9 @@ class Plugin(PluginBase):
 
     # ---------- 入口 ----------
     async def on_event(self, event) -> bool:
+        # 官方通道没有禁言/踢人/撤回接口，免得上报「禁言失败」打扰用户
+        if (event.get("_official") or {}).get("kind"):
+            return False
         cfg = self.ctx.plugin_cfg("group_admin")
         if not cfg.get("enabled"):
             return False

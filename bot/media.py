@@ -218,6 +218,7 @@ _EXT_KIND = {
     ".ass": "text", ".vtt": "text", ".lrc": "text",
     # 文档
     ".docx": "docx", ".pptx": "pptx", ".xlsx": "xlsx", ".pdf": "pdf",
+    ".doc": "doc", ".wps": "doc", ".rtf": "doc",
 }
 
 _CTYPE_KIND = {
@@ -499,6 +500,52 @@ def _pdf_text(data: bytes) -> tuple[str, int | None, str]:
 # ---------------------------------------------------------------- 文本抽取
 
 
+def _doc_text(data: bytes) -> str:
+    """老式 .doc/.wps/.rtf：优先 antiword，其次从二进制里捞 UTF-16/GBK 文本。"""
+    if data[:5] == b"{\\rtf":
+        raw = data.decode("latin-1", "ignore")
+        raw = re.sub(r"\\\\[a-zA-Z]+-?\d* ?", " ", raw)
+        raw = raw.replace("{", " ").replace("}", " ")
+        return re.sub(r"[ \t]{2,}", " ", raw).strip()
+    import shutil, subprocess, tempfile, os
+    tool = shutil.which("antiword") or shutil.which("catdoc")
+    if tool:
+        fd, path = tempfile.mkstemp(suffix=".doc")
+        try:
+            os.write(fd, data); os.close(fd)
+            out = subprocess.run([tool, path], capture_output=True, timeout=20)
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout.decode("utf-8", "ignore")
+        except Exception:
+            pass
+        finally:
+            try: os.unlink(path)
+            except Exception: pass
+    # 兜底：WordDocument 里正文常为 UTF-16LE，捞可打印片段
+    best = []
+    candidates = []
+    for enc in ("utf-16-le", "gbk"):
+        for skip in (0, 1):
+            try:
+                candidates.append(data[skip:].decode(enc, "ignore"))
+            except Exception:
+                continue
+    for txt in candidates:
+        runs = re.findall(r"[\u4e00-\u9fff\u3000-\u303fA-Za-z0-9，。；：！？、（）《》%.\-\s]{6,}", txt)
+        joined = "\n".join(r.strip() for r in runs if len(r.strip()) >= 6)
+        score = len(re.findall(r"[\u4e00-\u9fff]", joined))
+        if score > len(re.findall(r"[\u4e00-\u9fff]", "".join(best))):
+            best = [joined]
+    # 去掉二进制噪声：只保留可读行
+    text = "".join(best)
+    lines = []
+    for line in text.splitlines():
+        line = " ".join(line.split())
+        if len(re.findall(r"[\u4e00-\u9fffA-Za-z]", line)) >= 4:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def extract_text(data: bytes, filename: str = "", content_type: str = "",
                  max_chars: int = DEFAULT_MAX_CHARS) -> dict:
     """从文件字节里抽文本。
@@ -528,6 +575,8 @@ def extract_text(data: bytes, filename: str = "", content_type: str = "",
             text, pages = _xlsx_text(data)
         elif kind == "pdf":
             text, pages, error = _pdf_text(data)
+        elif kind == "doc":
+            text = _doc_text(data)
         elif kind == "image":
             pass  # 图片不抽文本，由上层做视觉处理
         else:
