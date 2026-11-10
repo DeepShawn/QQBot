@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import com.qqbot.console.ui.AiPage
 import com.qqbot.console.ui.GlassBackdrop
+import com.qqbot.console.ui.GlassButton
 import com.qqbot.console.ui.GlassCard
 import com.qqbot.console.ui.GlassTabBar
 import com.qqbot.console.ui.GlassTabItem
@@ -76,14 +77,12 @@ import com.qqbot.console.ui.UpdatePromptHost
 import kotlin.math.abs
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Community
@@ -225,11 +224,7 @@ private fun SetupScreen() {
                                     fontSize = 13.sp,
                                 )
                                 Spacer(Modifier.height(12.dp))
-                                TextButton(
-                                    text = "开始安装",
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                                    onClick = {
+                                GlassButton(text = "开始安装", onClick = {
                                         val granted = ctx.checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) ==
                                             PackageManager.PERMISSION_GRANTED
                                         if (granted) Installer.installFromFile(ctx, pkg)
@@ -237,8 +232,7 @@ private fun SetupScreen() {
                                             Manifest.permission.READ_EXTERNAL_STORAGE,
                                             Manifest.permission.WRITE_EXTERNAL_STORAGE,
                                         ))
-                                    },
-                                )
+                                    }, modifier = Modifier.fillMaxWidth(), primary = true)
                                 Spacer(Modifier.height(8.dp))
                             } else {
                                 Text(
@@ -249,11 +243,7 @@ private fun SetupScreen() {
                                 )
                                 Spacer(Modifier.height(12.dp))
                             }
-                            TextButton(
-                                text = "手动选择安装包",
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { picker.launch(arrayOf("*/*")) },
-                            )
+                            GlassButton(text = "手动选择安装包", onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth(), primary = false)
                         }
 
                         Phase.INSTALLING, Phase.STARTING -> {
@@ -280,18 +270,9 @@ private fun SetupScreen() {
                             Spacer(Modifier.height(12.dp))
                             Text(Installer.error, fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
                             Spacer(Modifier.height(20.dp))
-                            TextButton(
-                                text = "重试",
-                                modifier = Modifier.fillMaxWidth(),
-                                colors = ButtonDefaults.textButtonColorsPrimary(),
-                                onClick = { Installer.boot(ctx) },
-                            )
+                            GlassButton(text = "重试", onClick = { Installer.boot(ctx) }, modifier = Modifier.fillMaxWidth(), primary = true)
                             Spacer(Modifier.height(8.dp))
-                            TextButton(
-                                text = "重新安装运行环境",
-                                modifier = Modifier.fillMaxWidth(),
-                                onClick = { Installer.reinstall() },
-                            )
+                            GlassButton(text = "重新安装运行环境", onClick = { Installer.reinstall() }, modifier = Modifier.fillMaxWidth(), primary = false)
                         }
 
                         Phase.READY -> Unit

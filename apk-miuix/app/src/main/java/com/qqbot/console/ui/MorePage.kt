@@ -56,7 +56,6 @@ import org.json.JSONObject
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -203,7 +202,7 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             val modelOptions = if (useChatgpt) listOf("gpt-image-2") else apiModels
             val currentModel = ig.optStr("model").ifBlank { modelOptions.first() }
 
-            OverlayDropdownPreference(
+            GlassSelectRow(
                 title = "画图账号",
                 summary = when {
                     !useChatgpt -> "不使用账号（用图片 API Key）"
@@ -232,7 +231,7 @@ fun MorePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 },
             )
 
-            OverlayDropdownPreference(
+            GlassSelectRow(
                 title = "模型",
                 summary = currentModel,
                 items = modelOptions,

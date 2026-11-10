@@ -14,7 +14,6 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 
 private const val SCHEDULED_INTERVAL_DEFAULT = 301
 private const val QUOTA_INTERVAL_DEFAULT = 301
@@ -73,7 +72,7 @@ fun ScheduledMessagePage(padding: PaddingValues, scrollBehavior: ScrollBehavior,
                 }
             }
 
-            OverlayDropdownPreference(
+            GlassSelectRow(
                 title = "发送到",
                 summary = when (targetType) {
                     "private" -> "指定私聊" + if (targetId > 0) "（$targetId）" else "（还没填 QQ 号）"
@@ -113,7 +112,7 @@ fun ScheduledMessagePage(padding: PaddingValues, scrollBehavior: ScrollBehavior,
                 "plugins", "scheduled", "use_image", default = true,
             )
             if (useImage) {
-                OverlayDropdownPreference(
+                GlassSelectRow(
                     title = "图片尺寸",
                     summary = imageSize,
                     items = IMAGE_SIZES,

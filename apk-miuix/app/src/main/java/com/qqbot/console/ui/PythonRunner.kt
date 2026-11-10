@@ -30,10 +30,8 @@ import com.qqbot.console.Api
 import com.qqbot.console.Store
 import kotlinx.coroutines.launch
 import org.json.JSONObject
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -202,42 +200,21 @@ fun PythonRunnerDialog(onDismiss: () -> Unit) {
                 }
                 Spacer(Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TextButton(
-                        text = "复制输出",
-                        onClick = { copyOutput() },
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        text = "清空结果",
-                        onClick = { clearResult() },
-                        modifier = Modifier.weight(1f),
-                    )
+                    GlassButton(text = "复制输出", onClick = { copyOutput() }, modifier = Modifier.weight(1f), primary = false)
+                    GlassButton(text = "清空结果", onClick = { clearResult() }, modifier = Modifier.weight(1f), primary = false)
                 }
             }
 
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(
-                    text = if (running) "运行中…" else "运行",
-                    onClick = { runCode() },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
-                TextButton(
-                    text = "清空",
-                    onClick = {
+                GlassButton(text = if (running) "运行中…" else "运行", onClick = { runCode() }, modifier = Modifier.weight(1f), primary = true)
+                GlassButton(text = "清空", onClick = {
                         if (!running) {
                             code = ""
                             clearResult()
                         }
-                    },
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    text = "关闭",
-                    onClick = { if (!running) onDismiss() },
-                    modifier = Modifier.weight(1f),
-                )
+                    }, modifier = Modifier.weight(1f), primary = false)
+                GlassButton(text = "关闭", onClick = { if (!running) onDismiss() }, modifier = Modifier.weight(1f), primary = false)
             }
             Spacer(Modifier.height(4.dp))
         }

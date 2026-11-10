@@ -20,10 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qqbot.console.AppUpdates
 import kotlinx.coroutines.launch
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
@@ -81,32 +79,19 @@ fun UpdatePromptHost() {
 
             Spacer(Modifier.height(16.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(
-                    text = "稍后",
-                    onClick = { if (!AppUpdates.downloading) AppUpdates.prompt = false },
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    text = when {
+                GlassButton(text = "稍后", onClick = { if (!AppUpdates.downloading) AppUpdates.prompt = false }, modifier = Modifier.weight(1f), primary = false)
+                GlassButton(text = when {
                         AppUpdates.downloading -> "处理中…"
                         info.isLocal -> "立即安装"
                         else -> "立即更新"
-                    },
-                    onClick = { scope.launch { AppUpdates.downloadAndInstall(ctx) } },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                    }, onClick = { scope.launch { AppUpdates.downloadAndInstall(ctx) } }, modifier = Modifier.weight(1f), primary = true)
             }
             if (!AppUpdates.downloading) {
                 Spacer(Modifier.height(4.dp))
-                TextButton(
-                    text = "跳过这个版本",
-                    onClick = {
+                GlassButton(text = "跳过这个版本", onClick = {
                         AppUpdates.skipVersion(ctx, info.version)
                         AppUpdates.prompt = false
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    }, modifier = Modifier.fillMaxWidth(), primary = false)
             }
             Spacer(Modifier.height(4.dp))
         }

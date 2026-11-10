@@ -32,7 +32,6 @@ import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 
 private val THEME_IDS = listOf("dark", "light", "system")
 private val THEME_LABELS = listOf("深色（默认）", "浅色", "跟随系统")
@@ -107,7 +106,7 @@ fun ThemePage(padding: PaddingValues, scrollBehavior: ScrollBehavior, onBack: ()
         }
 
         group("外观") {
-            OverlayDropdownPreference(
+            GlassSelectRow(
                 title = "外观模式",
                 summary = THEME_LABELS[THEME_IDS.indexOf(themeMode).coerceAtLeast(0)],
                 items = THEME_LABELS,

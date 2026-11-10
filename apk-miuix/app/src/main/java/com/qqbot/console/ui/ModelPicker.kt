@@ -22,10 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.qqbot.console.Api
 import java.net.URLEncoder
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -96,12 +94,7 @@ fun ModelPickerDialog(
                 error.isNotBlank() -> {
                     Text(error, fontSize = 13.sp, color = Bad)
                     Spacer(Modifier.height(12.dp))
-                    TextButton(
-                        text = "重试",
-                        onClick = { reload++ },
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                    )
+                    GlassButton(text = "重试", onClick = { reload++ }, modifier = Modifier.fillMaxWidth(), primary = true)
                 }
 
                 else -> {
@@ -160,39 +153,22 @@ fun ModelPickerDialog(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TextButton(
-                        text = "取消",
-                        onClick = { manual = false },
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        text = "保存",
-                        onClick = {
+                    GlassButton(text = "取消", onClick = { manual = false }, modifier = Modifier.weight(1f), primary = false)
+                    GlassButton(text = "保存", onClick = {
                             val v = manualText.trim()
                             if (v.isNotBlank()) {
                                 onPick(v)
                                 onDismiss()
                             }
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                    )
+                        }, modifier = Modifier.weight(1f), primary = true)
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TextButton(
-                        text = "手动输入",
-                        onClick = {
+                    GlassButton(text = "手动输入", onClick = {
                             manual = true
                             manualText = current
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        text = "关闭",
-                        onClick = onDismiss,
-                        modifier = Modifier.weight(1f),
-                    )
+                        }, modifier = Modifier.weight(1f), primary = false)
+                    GlassButton(text = "关闭", onClick = onDismiss, modifier = Modifier.weight(1f), primary = false)
                 }
             }
         }

@@ -16,6 +16,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,6 +31,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -475,17 +478,30 @@ fun GlassActionRow(
     title: String,
     subtitle: String? = null,
     danger: Boolean = false,
+    selected: Boolean = false,
+    trailing: String? = null,
     onClick: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    val accent = LocalAccent.current
     val shape = RoundedCornerShape(GlassRadius.md)
-    val color = if (danger) GlassDanger else GlassText.primary
+    val color = when {
+        danger -> GlassDanger
+        selected -> accent.primary
+        else -> GlassText.primary
+    }
     Row(
         Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(if (pressed) Color.White.copy(alpha = 0.08f) else Color.Transparent)
+            .background(
+                when {
+                    pressed -> Color.White.copy(alpha = 0.08f)
+                    selected -> accent.fill
+                    else -> Color.Transparent
+                },
+            )
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -495,6 +511,60 @@ fun GlassActionRow(
             if (!subtitle.isNullOrBlank()) {
                 Spacer(Modifier.height(2.dp))
                 Text(subtitle, fontSize = 13.sp, color = GlassText.secondary)
+            }
+        }
+        if (!trailing.isNullOrBlank()) {
+            Spacer(Modifier.width(8.dp))
+            Text(trailing, fontSize = 16.sp, color = if (selected) accent.primary else GlassText.tertiary)
+        }
+    }
+}
+
+/**
+ * 玻璃下拉选择行：点击打开 GlassSheet 选择列表，当前项高亮 + ✓；长列表可滚动。
+ * 用于替换所有 MIUIX 下拉选择组件。
+ */
+@Composable
+fun GlassSelectRow(
+    title: String,
+    items: List<String>,
+    selectedIndex: Int,
+    onSelectedIndexChange: (Int) -> Unit,
+    summary: String? = null,
+    enabled: Boolean = true,
+) {
+    var show by remember { mutableStateOf(false) }
+    val current = items.getOrNull(selectedIndex)
+    top.yukonga.miuix.kmp.preference.ArrowPreference(
+        title = title,
+        summary = summary ?: current,
+        onClick = { if (enabled) show = true },
+    )
+    if (show) {
+        GlassSheet(
+            show = true,
+            title = title,
+            onDismissRequest = { show = false },
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            ) {
+                items.forEachIndexed { i, item ->
+                    GlassActionRow(
+                        title = item,
+                        selected = i == selectedIndex,
+                        trailing = if (i == selectedIndex) "✓" else null,
+                        onClick = {
+                            show = false
+                            if (i != selectedIndex) onSelectedIndexChange(i)
+                        },
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
@@ -556,33 +626,54 @@ fun GlassButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     primary: Boolean = true,
+    enabled: Boolean = true,
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (pressed && !GlassTokens.lowPower) 0.96f else 1f,
+        targetValue = if (pressed && enabled && !GlassTokens.lowPower) 0.96f else 1f,
         animationSpec = spring(dampingRatio = 0.55f, stiffness = 700f),
         label = "glassButtonScale",
     )
     val shape = RoundedCornerShape(50)
     val accent = LocalAccent.current
 
-    val base = modifier.height(48.dp).graphicsLayer { scaleX = scale; scaleY = scale }
-    val decorated = if (primary) {
+    val base = modifier.height(48.dp).graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+        alpha = if (enabled) 1f else 0.55f
+    }
+    val decorated = if (primary && enabled) {
         base.shadow(6.dp, shape, ambientColor = Color.Transparent, spotColor = accent.glow)
     } else base
 
     Box(
         modifier = decorated
             .clip(shape)
-            .background(if (primary) Brush.linearGradient(listOf(accent.primary, accent.secondary)) else Brush.linearGradient(listOf(GlassTokens.regularFill, GlassTokens.regularFill)))
-            .then(if (primary) Modifier else Modifier.border(1.dp, Brush.linearGradient(colorStops = GlassTokens.regularRim.toTypedArray()), shape))
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
+            .background(
+                when {
+                    !primary -> Brush.linearGradient(listOf(GlassTokens.regularFill, GlassTokens.regularFill))
+                    else -> Brush.linearGradient(listOf(accent.primary, accent.secondary))
+                },
+            )
+            .then(
+                if (!primary) Modifier.border(
+                    1.dp,
+                    Brush.linearGradient(colorStops = GlassTokens.regularRim.toTypedArray()),
+                    shape,
+                ) else Modifier,
+            )
+            .clickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text,
-            color = if (primary) Color.White else GlassText.primary,
+            color = if (!enabled) GlassText.disabled else if (primary) Color.White else GlassText.primary,
             fontSize = 16.sp,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),

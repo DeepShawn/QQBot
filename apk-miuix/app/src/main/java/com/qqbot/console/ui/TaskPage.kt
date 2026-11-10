@@ -36,11 +36,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.net.URLEncoder
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
@@ -197,17 +195,8 @@ fun TaskManagerPage(padding: PaddingValues, scrollBehavior: ScrollBehavior, onBa
                 Modifier.fillMaxWidth().padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                TextButton(
-                    text = if (starting) "正在启动…" else "运行",
-                    onClick = { runCommand() },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
-                TextButton(
-                    text = "刷新列表",
-                    onClick = { scope.launch { refreshTasks(); Store.toast = "已刷新" } },
-                    modifier = Modifier.weight(1f),
-                )
+                GlassButton(text = if (starting) "正在启动…" else "运行", onClick = { runCommand() }, modifier = Modifier.weight(1f), primary = true)
+                GlassButton(text = "刷新列表", onClick = { scope.launch { refreshTasks(); Store.toast = "已刷新" } }, modifier = Modifier.weight(1f), primary = false)
             }
             if (starting) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -357,29 +346,12 @@ private fun TaskDetailDialog(
 
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(
-                    text = "刷新",
-                    onClick = onRefresh,
-                    modifier = Modifier.weight(1f),
-                )
+                GlassButton(text = "刷新", onClick = onRefresh, modifier = Modifier.weight(1f), primary = false)
                 if (status == "running") {
-                    TextButton(
-                        text = "停止",
-                        onClick = { if (id.isNotBlank()) onStop(id) },
-                        modifier = Modifier.weight(1f),
-                    )
+                    GlassButton(text = "停止", onClick = { if (id.isNotBlank()) onStop(id) }, modifier = Modifier.weight(1f), primary = false)
                 }
-                TextButton(
-                    text = "复制输出",
-                    onClick = { copyAll() },
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    text = "关闭",
-                    onClick = onClose,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                GlassButton(text = "复制输出", onClick = { copyAll() }, modifier = Modifier.weight(1f), primary = false)
+                GlassButton(text = "关闭", onClick = onClose, modifier = Modifier.weight(1f), primary = true)
             }
             Spacer(Modifier.height(4.dp))
         }
@@ -569,24 +541,14 @@ private fun SkillViewDialog(
                 Text("确定删除技能「$name」？", fontSize = 14.sp, color = Bad)
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TextButton(text = "取消", onClick = { confirmDelete = false }, modifier = Modifier.weight(1f))
-                    TextButton(
-                        text = "确认删除",
-                        onClick = onDelete,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                    )
+                    GlassButton(text = "取消", onClick = { confirmDelete = false }, modifier = Modifier.weight(1f), primary = false)
+                    GlassButton(text = "确认删除", onClick = onDelete, modifier = Modifier.weight(1f), primary = true)
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(text = "编辑", onClick = onEdit, modifier = Modifier.weight(1f))
-                    TextButton(text = "删除", onClick = { confirmDelete = true }, modifier = Modifier.weight(1f))
-                    TextButton(
-                        text = "关闭",
-                        onClick = onClose,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                    )
+                    GlassButton(text = "编辑", onClick = onEdit, modifier = Modifier.weight(1f), primary = false)
+                    GlassButton(text = "删除", onClick = { confirmDelete = true }, modifier = Modifier.weight(1f), primary = false)
+                    GlassButton(text = "关闭", onClick = onClose, modifier = Modifier.weight(1f), primary = true)
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -636,20 +598,15 @@ private fun SkillEditDialog(
                 Spacer(Modifier.height(8.dp))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(text = "取消", onClick = onDismiss, modifier = Modifier.weight(1f))
-                TextButton(
-                    text = "保存",
-                    onClick = {
+                GlassButton(text = "取消", onClick = onDismiss, modifier = Modifier.weight(1f), primary = false)
+                GlassButton(text = "保存", onClick = {
                         val n = name.trim()
                         if (n.isBlank()) {
                             error = "技能名称不能为空"
                         } else {
                             onSave(n, content)
                         }
-                    },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                    }, modifier = Modifier.weight(1f), primary = true)
             }
             Spacer(Modifier.height(4.dp))
         }

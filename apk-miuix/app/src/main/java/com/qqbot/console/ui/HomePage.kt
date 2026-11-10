@@ -22,10 +22,8 @@ import com.qqbot.console.ProotService
 import com.qqbot.console.Store
 import com.qqbot.console.patchOf
 import kotlinx.coroutines.launch
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
 
@@ -92,17 +90,8 @@ fun HomePage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 Modifier.fillMaxWidth().padding(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                TextButton(
-                    text = "开启服务",
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    onClick = { scope.launch { Store.action("all_start", "服务已开启"); Store.refresh() } },
-                )
-                TextButton(
-                    text = "关闭机器人",
-                    modifier = Modifier.weight(1f),
-                    onClick = { scope.launch { Store.action("all_stop", "机器人已关闭，QQ 保持在线"); Store.refresh() } },
-                )
+                GlassButton(text = "开启服务", onClick = { scope.launch { Store.action("all_start", "服务已开启"); Store.refresh() } }, modifier = Modifier.weight(1f), primary = true)
+                GlassButton(text = "关闭机器人", onClick = { scope.launch { Store.action("all_stop", "机器人已关闭，QQ 保持在线"); Store.refresh() } }, modifier = Modifier.weight(1f), primary = false)
             }
             ArrowPreference(
                 title = "重启机器人",

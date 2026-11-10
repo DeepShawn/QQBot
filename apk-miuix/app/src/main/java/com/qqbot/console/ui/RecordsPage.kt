@@ -32,14 +32,11 @@ import com.qqbot.console.objects
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import top.yukonga.miuix.kmp.basic.BasicComponent
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 private val COUNT_OPTIONS = listOf("20 条", "50 条", "100 条", "200 条", "300 条")
@@ -110,43 +107,28 @@ fun RecordsPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             if (groups.isEmpty()) {
                 ItemRow("群列表", "点这里加载") { loadGroups() }
             } else {
-                OverlayDropdownPreference(
+                GlassSelectRow(
                     title = "选择群",
                     items = groups.map { it.optStr("name") },
                     selectedIndex = groupIndex.coerceIn(0, groups.size - 1),
                     onSelectedIndexChange = { groupIndex = it },
                 )
             }
-            OverlayDropdownPreference(
+            GlassSelectRow(
                 title = "读取多少条",
                 items = COUNT_OPTIONS,
                 selectedIndex = countIndex,
                 onSelectedIndexChange = { countIndex = it },
             )
             Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(
-                    text = if (loadingMsg) "读取中…" else "读取消息",
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    enabled = groups.isNotEmpty() && !loadingMsg,
-                    onClick = { loadMessages() },
-                )
-                TextButton(
-                    text = "刷新群列表",
-                    modifier = Modifier.weight(1f),
-                    onClick = { loadGroups() },
-                )
+                GlassButton(text = if (loadingMsg) "读取中…" else "读取消息", onClick = { loadMessages() }, modifier = Modifier.weight(1f), primary = true, enabled = groups.isNotEmpty() && !loadingMsg)
+                GlassButton(text = "刷新群列表", onClick = { loadGroups() }, modifier = Modifier.weight(1f), primary = false)
             }
         }
 
         group("机器人写的文件") {
             Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(
-                    text = "刷新文件列表",
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                    onClick = { loadFiles() },
-                )
+                GlassButton(text = "刷新文件列表", onClick = { loadFiles() }, modifier = Modifier.weight(1f), primary = true)
             }
             val list = files
             when {
@@ -230,7 +212,7 @@ fun RecordsPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             }
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TextButton(text = "关闭", onClick = { openFile = null }, modifier = Modifier.weight(1f))
+                GlassButton(text = "关闭", onClick = { openFile = null }, modifier = Modifier.weight(1f), primary = false)
             }
         }
     }
@@ -300,7 +282,7 @@ private fun MsgDialog(
         }
         Spacer(Modifier.height(12.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            TextButton(text = "关闭", onClick = onDismiss, modifier = Modifier.weight(1f))
+            GlassButton(text = "关闭", onClick = onDismiss, modifier = Modifier.weight(1f), primary = false)
         }
     }
 }

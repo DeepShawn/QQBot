@@ -39,10 +39,8 @@ import com.qqbot.console.Attempt
 import com.qqbot.console.Store
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -200,17 +198,8 @@ fun AccountDialog(
                     Text("退出后要重新用浏览器登录才能再用这个账号。", fontSize = 14.sp)
                     Spacer(Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        TextButton(
-                            text = "不退出",
-                            onClick = { confirmSignout = false },
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(
-                            text = if (signingOut) "正在退出…" else "确认退出",
-                            onClick = { signOut() },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.textButtonColorsPrimary(),
-                        )
+                        GlassButton(text = "不退出", onClick = { confirmSignout = false }, modifier = Modifier.weight(1f), primary = false)
+                        GlassButton(text = if (signingOut) "正在退出…" else "确认退出", onClick = { signOut() }, modifier = Modifier.weight(1f), primary = true)
                     }
                 }
 
@@ -255,11 +244,7 @@ fun AccountDialog(
                         Text(actionError, fontSize = 13.sp, color = Bad)
                     }
                     Spacer(Modifier.height(16.dp))
-                    TextButton(
-                        text = if (signingOut) "正在退出…" else "退出登录",
-                        onClick = { confirmSignout = true },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                    GlassButton(text = if (signingOut) "正在退出…" else "退出登录", onClick = { confirmSignout = true }, modifier = Modifier.fillMaxWidth(), primary = false)
                 }
 
                 else -> {
@@ -298,40 +283,22 @@ fun AccountDialog(
                     )
                     Spacer(Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        TextButton(
-                            text = if (starting) "取消" else "关闭",
-                            onClick = {
+                        GlassButton(text = if (starting) "取消" else "关闭", onClick = {
                                 if (starting) {
                                     loginGen++
                                     starting = false
                                 }
                                 onDismiss()
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
+                            }, modifier = Modifier.weight(1f), primary = false)
                         if (starting) {
-                            TextButton(
-                                text = "正在准备…",
-                                onClick = {},
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.textButtonColorsPrimary(),
-                            )
+                            GlassButton(text = "正在准备…", onClick = {}, modifier = Modifier.weight(1f), primary = true)
                         } else {
-                            TextButton(
-                                text = "开始登录",
-                                onClick = { startLogin() },
-                                modifier = Modifier.weight(1f),
-                                colors = ButtonDefaults.textButtonColorsPrimary(),
-                            )
+                            GlassButton(text = "开始登录", onClick = { startLogin() }, modifier = Modifier.weight(1f), primary = true)
                         }
                     }
                     if (rateLimited && onSwitchToApiKey != null) {
                         Spacer(Modifier.height(6.dp))
-                        TextButton(
-                            text = "改用 API Key",
-                            onClick = { onSwitchToApiKey() },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                        GlassButton(text = "改用 API Key", onClick = { onSwitchToApiKey() }, modifier = Modifier.fillMaxWidth(), primary = false)
                     }
                 }
             }
@@ -392,14 +359,9 @@ private fun AttemptBody(
                 )
             }
             Spacer(Modifier.height(14.dp))
-            TextButton(
-                text = "打开浏览器",
-                onClick = { if (a.url.isNotBlank()) onOpenUrl(a.url) },
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.textButtonColorsPrimary(),
-            )
+            GlassButton(text = "打开浏览器", onClick = { if (a.url.isNotBlank()) onOpenUrl(a.url) }, modifier = Modifier.fillMaxWidth(), primary = true)
             Spacer(Modifier.height(6.dp))
-            TextButton(text = "取消登录", onClick = onCancel, modifier = Modifier.fillMaxWidth())
+            GlassButton(text = "取消登录", onClick = onCancel, modifier = Modifier.fillMaxWidth(), primary = false)
         }
 
         "device" -> {
@@ -417,17 +379,8 @@ private fun AttemptBody(
             )
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(
-                    text = "复制代码",
-                    onClick = { if (a.userCode.isNotBlank()) onCopy(a.userCode) },
-                    modifier = Modifier.weight(1f),
-                )
-                TextButton(
-                    text = "打开浏览器",
-                    onClick = { if (a.url.isNotBlank()) onOpenUrl(a.url) },
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                GlassButton(text = "复制代码", onClick = { if (a.userCode.isNotBlank()) onCopy(a.userCode) }, modifier = Modifier.weight(1f), primary = false)
+                GlassButton(text = "打开浏览器", onClick = { if (a.url.isNotBlank()) onOpenUrl(a.url) }, modifier = Modifier.weight(1f), primary = true)
             }
             if (a.url.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
@@ -438,7 +391,7 @@ private fun AttemptBody(
                 )
             }
             Spacer(Modifier.height(10.dp))
-            TextButton(text = "取消登录", onClick = onCancel, modifier = Modifier.fillMaxWidth())
+            GlassButton(text = "取消登录", onClick = onCancel, modifier = Modifier.fillMaxWidth(), primary = false)
         }
 
         "prompt" -> {
@@ -449,11 +402,7 @@ private fun AttemptBody(
             )
             if (a.url.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
-                TextButton(
-                    text = "打开浏览器",
-                    onClick = { onOpenUrl(a.url) },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                GlassButton(text = "打开浏览器", onClick = { onOpenUrl(a.url) }, modifier = Modifier.fillMaxWidth(), primary = false)
             }
             Spacer(Modifier.height(10.dp))
             GlassTextField(
@@ -470,13 +419,8 @@ private fun AttemptBody(
                 Spacer(Modifier.height(8.dp))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(text = "取消登录", onClick = onCancel, modifier = Modifier.weight(1f))
-                TextButton(
-                    text = "提交",
-                    onClick = onSubmit,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                GlassButton(text = "取消登录", onClick = onCancel, modifier = Modifier.weight(1f), primary = false)
+                GlassButton(text = "提交", onClick = onSubmit, modifier = Modifier.weight(1f), primary = true)
             }
         }
 
@@ -487,12 +431,7 @@ private fun AttemptBody(
                 color = Good,
             )
             Spacer(Modifier.height(14.dp))
-            TextButton(
-                text = "完成",
-                onClick = onFinish,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.textButtonColorsPrimary(),
-            )
+            GlassButton(text = "完成", onClick = onFinish, modifier = Modifier.fillMaxWidth(), primary = true)
         }
 
         "failed" -> {
@@ -511,21 +450,12 @@ private fun AttemptBody(
             }
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(text = "取消", onClick = onCancel, modifier = Modifier.weight(1f))
-                TextButton(
-                    text = "重试",
-                    onClick = onRetry,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                GlassButton(text = "取消", onClick = onCancel, modifier = Modifier.weight(1f), primary = false)
+                GlassButton(text = "重试", onClick = onRetry, modifier = Modifier.weight(1f), primary = true)
             }
             if (rateLimited && onUseApiKey != null) {
                 Spacer(Modifier.height(6.dp))
-                TextButton(
-                    text = "改用 API Key",
-                    onClick = { onUseApiKey() },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                GlassButton(text = "改用 API Key", onClick = { onUseApiKey() }, modifier = Modifier.fillMaxWidth(), primary = false)
             }
         }
 
@@ -533,13 +463,8 @@ private fun AttemptBody(
             Text("已取消这次登录。", fontSize = 13.sp, color = MiuixTheme.colorScheme.onSurfaceVariantSummary)
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(text = "关闭", onClick = onClose, modifier = Modifier.weight(1f))
-                TextButton(
-                    text = "重新开始",
-                    onClick = onRetry,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                GlassButton(text = "关闭", onClick = onClose, modifier = Modifier.weight(1f), primary = false)
+                GlassButton(text = "重新开始", onClick = onRetry, modifier = Modifier.weight(1f), primary = true)
             }
         }
 
@@ -553,7 +478,7 @@ private fun AttemptBody(
                 color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
             )
             Spacer(Modifier.height(10.dp))
-            TextButton(text = "取消登录", onClick = onCancel, modifier = Modifier.fillMaxWidth())
+            GlassButton(text = "取消登录", onClick = onCancel, modifier = Modifier.fillMaxWidth(), primary = false)
         }
     }
 }

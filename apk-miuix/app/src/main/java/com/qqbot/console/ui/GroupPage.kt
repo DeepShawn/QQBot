@@ -7,7 +7,6 @@ import com.qqbot.console.patchOf
 import org.json.JSONArray
 import org.json.JSONObject
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 
@@ -59,7 +58,7 @@ fun GroupPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             EditPreference("正则", bw.optJSONArray("regex_words").joinText(), multiline = true) {
                 Store.patch(patchOf("plugins", "group_admin", "badwords", "regex_words", value = splitList(it)))
             }
-            OverlayDropdownPreference(
+            GlassSelectRow(
                 title = "处理方式",
                 items = ACTION_LABELS,
                 selectedIndex = ACTIONS.indexOf(bw.optStr("action")).coerceAtLeast(0),

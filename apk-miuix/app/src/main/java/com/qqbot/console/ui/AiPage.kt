@@ -52,13 +52,10 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.max
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 
 private val PROVIDERS = listOf("openai", "claude", "gemini")
 private val PROVIDER_LABELS = listOf("OpenAI 兼容（DeepSeek / ChatGPT / Grok / 中转站）", "Claude 原生", "Gemini 原生")
@@ -288,7 +285,7 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             if (profiles.isEmpty()) {
                 InfoRow("还没有接口", "在网页控制台添加")
             } else {
-                OverlayDropdownPreference(
+                GlassSelectRow(
                     title = "使用",
                     summary = active?.optStr("model"),
                     items = profiles.map { it.optStr("name").ifBlank { it.optStr("id") } },
@@ -307,7 +304,7 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 // 认证方式放最前面：到底是 API Key 还是某个账号，先选清楚
                 val auth = editing.optStr("auth")
                 val authIdx = AUTH_IDS.indexOf(auth).coerceAtLeast(0)
-                OverlayDropdownPreference(
+                GlassSelectRow(
                     title = "认证方式（API Key / 账号）",
                     summary = if (auth.isBlank()) "API Key" else "${PROVIDER_NAMES[auth] ?: auth} 账号",
                     items = AUTH_LABELS,
@@ -326,7 +323,7 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     }
                 }
                 val pIdx = PROVIDERS.indexOf(editing.optStr("provider").ifBlank { "openai" }).coerceAtLeast(0)
-                OverlayDropdownPreference(
+                GlassSelectRow(
                     title = "协议",
                     items = PROVIDER_LABELS,
                     selectedIndex = pIdx,
@@ -377,11 +374,7 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                         .ifBlank { "（这个预设没有单独的人格提示词）" },
                     onClick = { presetDetail = preset },
                 )
-                TextButton(
-                    text = "编辑为自定义",
-                    onClick = { copyPresetToCustom(preset) },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                )
+                GlassButton(text = "编辑为自定义", onClick = { copyPresetToCustom(preset) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), primary = false)
                 Hint("当前人格由预设「${preset.optStr("name")}」提供；要自由修改，点「编辑为自定义」把内容复制过来。")
             }
         }
@@ -463,11 +456,7 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                         .ifBlank { "（这个预设没有单独的形象提示词）" },
                     onClick = { presetDetail = preset },
                 )
-                TextButton(
-                    text = "编辑为自定义",
-                    onClick = { copyPresetToCustom(preset) },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                )
+                GlassButton(text = "编辑为自定义", onClick = { copyPresetToCustom(preset) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), primary = false)
                 Hint("形象提示词跟随预设；点「编辑为自定义」可复制到自定义后修改。参考图也随预设变化（在预设卡片长按菜单里设置）。")
             }
 
@@ -489,18 +478,12 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    TextButton(
-                        text = if (refBusy) "处理中…" else "更换参考图",
-                        onClick = {
+                    GlassButton(text = if (refBusy) "处理中…" else "更换参考图", onClick = {
                             refPicker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                             )
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(
-                        text = "移除",
-                        onClick = {
+                        }, modifier = Modifier.weight(1f), primary = false)
+                    GlassButton(text = "移除", onClick = {
                             scope.launch {
                                 refBusy = true
                                 refError = ""
@@ -514,21 +497,14 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                                     Store.toast = err
                                 }
                             }
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
+                        }, modifier = Modifier.weight(1f), primary = false)
                 }
             } else {
-                TextButton(
-                    text = if (refBusy) "处理中…" else "选择参考图",
-                    onClick = {
+                GlassButton(text = if (refBusy) "处理中…" else "选择参考图", onClick = {
                         refPicker.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                         )
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    colors = ButtonDefaults.textButtonColorsPrimary(),
-                )
+                    }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), primary = true)
             }
             if (refError.isNotBlank()) {
                 Text(
@@ -1011,19 +987,13 @@ private fun PresetEditorDialog(
                     Spacer(Modifier.height(8.dp))
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TextButton(
-                        text = if (refBusy) "处理中…" else if (thumb == null) "选择参考图" else "更换参考图",
-                        onClick = {
+                    GlassButton(text = if (refBusy) "处理中…" else if (thumb == null) "选择参考图" else "更换参考图", onClick = {
                             picker.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                             )
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
+                        }, modifier = Modifier.weight(1f), primary = false)
                     if (thumb != null) {
-                        TextButton(
-                            text = "移除",
-                            onClick = {
+                        GlassButton(text = "移除", onClick = {
                                 scope.launch {
                                     refBusy = true
                                     refError = ""
@@ -1037,9 +1007,7 @@ private fun PresetEditorDialog(
                                         Store.toast = err
                                     }
                                 }
-                            },
-                            modifier = Modifier.weight(1f),
-                        )
+                            }, modifier = Modifier.weight(1f), primary = false)
                     }
                 }
                 if (refError.isNotBlank()) {

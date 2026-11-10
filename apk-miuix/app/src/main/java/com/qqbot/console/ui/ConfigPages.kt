@@ -27,14 +27,11 @@ import com.qqbot.console.patchOf
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
-import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.preference.ArrowPreference
-import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 // ============================================================ 关键词管理页
@@ -224,7 +221,7 @@ private fun RuleEditDialog(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
             )
 
-            OverlayDropdownPreference(
+            GlassSelectRow(
                 title = "匹配方式",
                 items = MATCH_LABELS,
                 selectedIndex = MATCH_IDS.indexOf(match).coerceAtLeast(0),
@@ -257,7 +254,7 @@ private fun RuleEditDialog(
                 )
             }
 
-            OverlayDropdownPreference(
+            GlassSelectRow(
                 title = "生效范围",
                 items = SCOPE_LABELS,
                 selectedIndex = SCOPE_IDS.indexOf(scope).coerceAtLeast(0),
@@ -278,26 +275,16 @@ private fun RuleEditDialog(
                 Text("确定删除这条规则？", fontSize = 14.sp, color = Bad)
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TextButton(text = "取消", onClick = { confirmDelete = false }, modifier = Modifier.weight(1f))
-                    TextButton(
-                        text = "确认删除",
-                        onClick = onDelete,
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                    )
+                    GlassButton(text = "取消", onClick = { confirmDelete = false }, modifier = Modifier.weight(1f), primary = false)
+                    GlassButton(text = "确认删除", onClick = onDelete, modifier = Modifier.weight(1f), primary = true)
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(text = "取消", onClick = onDismiss, modifier = Modifier.weight(1f))
+                    GlassButton(text = "取消", onClick = onDismiss, modifier = Modifier.weight(1f), primary = false)
                     if (!isNew) {
-                        TextButton(text = "删除", onClick = { confirmDelete = true }, modifier = Modifier.weight(1f))
+                        GlassButton(text = "删除", onClick = { confirmDelete = true }, modifier = Modifier.weight(1f), primary = false)
                     }
-                    TextButton(
-                        text = "保存",
-                        onClick = { onSave(build()) },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                    )
+                    GlassButton(text = "保存", onClick = { onSave(build()) }, modifier = Modifier.weight(1f), primary = true)
                 }
             }
             Spacer(Modifier.height(4.dp))
