@@ -178,26 +178,15 @@ fun EditPreference(
         summary = if (secret) "输入新的值；留空则不修改" else null,
         onDismissRequest = { show = false },
     ) {
-        TextField(
+        GlassTextField(
             value = text,
             onValueChange = { text = it },
             label = if (secret) "新的 $title" else title,
             singleLine = !multiline,
             minLines = if (multiline) 5 else 1,
             maxLines = if (multiline) 10 else 1,
-            cornerRadius = GlassRadius.md,
-            colors = TextFieldDefaults.textFieldColors(
-                backgroundColor = GlassTokens.insetFill,
-                labelColor = if (focused) accent.primary else GlassText.tertiary,
-                borderColor = if (focused) accent.primary else GlassText.divider,
-            ),
-            keyboardOptions = if (numeric) androidx.compose.foundation.text.KeyboardOptions(
-                keyboardType = androidx.compose.ui.text.input.KeyboardType.Number,
-            ) else androidx.compose.foundation.text.KeyboardOptions.Default,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 16.dp)
-                .onFocusChanged { focused = it.isFocused },
+            numeric = numeric,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
         )
         DialogButtons(
             onCancel = { show = false },

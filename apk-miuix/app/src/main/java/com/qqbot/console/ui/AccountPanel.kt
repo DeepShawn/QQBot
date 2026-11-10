@@ -183,7 +183,7 @@ fun AccountDialog(
     val errorText = (attempt?.error.orEmpty() + " " + actionError).trim()
     val rateLimited = errorText.contains("429") || errorText.contains("限流")
 
-    OverlayDialog(
+    GlassDialog(
         show = true,
         title = "${account.name} 账号",
         onDismissRequest = {
@@ -456,7 +456,7 @@ private fun AttemptBody(
                 )
             }
             Spacer(Modifier.height(10.dp))
-            TextField(
+            GlassTextField(
                 value = input,
                 onValueChange = onInput,
                 label = "粘贴完整网址或授权码",

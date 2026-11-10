@@ -208,7 +208,7 @@ private fun RuleEditDialog(
         return obj
     }
 
-    OverlayDialog(
+    GlassDialog(
         show = true,
         title = if (isNew) "新增关键词规则" else "编辑关键词规则",
         onDismissRequest = onDismiss,
@@ -216,7 +216,7 @@ private fun RuleEditDialog(
         Column(
             Modifier.fillMaxWidth().heightIn(max = 540.dp).verticalScroll(rememberScrollState()),
         ) {
-            TextField(
+            GlassTextField(
                 value = name,
                 onValueChange = { name = it },
                 label = "规则名字",
@@ -232,7 +232,7 @@ private fun RuleEditDialog(
             )
 
             if (match == "regex") {
-                TextField(
+                GlassTextField(
                     value = regex,
                     onValueChange = { regex = it },
                     label = "正则表达式",
@@ -246,7 +246,7 @@ private fun RuleEditDialog(
                     modifier = Modifier.padding(bottom = 10.dp),
                 )
             } else {
-                TextField(
+                GlassTextField(
                     value = keywords,
                     onValueChange = { keywords = it },
                     label = "关键词（用逗号分隔）",
@@ -264,7 +264,7 @@ private fun RuleEditDialog(
                 onSelectedIndexChange = { scope = SCOPE_IDS[it] },
             )
 
-            TextField(
+            GlassTextField(
                 value = reply,
                 onValueChange = { reply = it },
                 label = "回复内容（可用 {nickname} {bot_name} {at}）",

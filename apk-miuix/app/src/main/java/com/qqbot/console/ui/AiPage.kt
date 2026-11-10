@@ -838,31 +838,20 @@ private fun PresetMenuDialog(
 ) {
     val name = preset.optStr("name").ifBlank { preset.optStr("id") }
     val emoji = preset.optStr("emoji").ifBlank { "🤖" }
-    GlassDialog(show = true, title = "$emoji $name", onDismissRequest = onDismiss) {
-        Column(Modifier.fillMaxWidth()) {
-            TextButton(text = "查看详情", onClick = onView, modifier = Modifier.fillMaxWidth())
+    GlassSheet(show = true, title = "$emoji $name", onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+            GlassActionRow(title = "查看详情", onClick = onView)
             if (isUser) {
-                TextButton(text = "编辑", onClick = onEdit, modifier = Modifier.fillMaxWidth())
+                GlassActionRow(title = "编辑", onClick = onEdit)
             }
-            TextButton(text = "上传 / 更换参考图", onClick = onUploadRef, modifier = Modifier.fillMaxWidth())
-            TextButton(text = "移除参考图", onClick = onRemoveRef, modifier = Modifier.fillMaxWidth())
-            TextButton(text = "复制为我的预设", onClick = onDuplicate, modifier = Modifier.fillMaxWidth())
-            TextButton(text = "复制为自定义人格", onClick = onCopyCustom, modifier = Modifier.fillMaxWidth())
+            GlassActionRow(title = "上传 / 更换参考图", onClick = onUploadRef)
+            GlassActionRow(title = "移除参考图", onClick = onRemoveRef)
+            GlassActionRow(title = "复制为我的预设", onClick = onDuplicate)
+            GlassActionRow(title = "复制为自定义人格", onClick = onCopyCustom)
             if (isUser) {
-                TextButton(
-                    text = "删除预设",
-                    onClick = onDelete,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.textButtonColors(textColor = Bad),
-                )
+                GlassActionRow(title = "删除预设", danger = true, onClick = onDelete)
             }
             Spacer(Modifier.height(8.dp))
-            GlassButton(
-                text = "关闭",
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth(),
-                primary = false,
-            )
         }
     }
 }
@@ -938,7 +927,7 @@ private fun PresetEditorDialog(
         Column(
             Modifier.fillMaxWidth().heightIn(max = 580.dp).verticalScroll(rememberScrollState()),
         ) {
-            TextField(
+            GlassTextField(
                 value = name,
                 onValueChange = { name = it.take(40) },
                 label = "名称（必填，≤40 字）",
@@ -951,7 +940,7 @@ private fun PresetEditorDialog(
                 color = GlassText.tertiary,
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 10.dp),
             )
-            TextField(
+            GlassTextField(
                 value = emoji,
                 onValueChange = { emoji = it.take(8) },
                 label = "emoji（可选，≤8 字符）",
@@ -959,7 +948,7 @@ private fun PresetEditorDialog(
                 modifier = Modifier.fillMaxWidth(),
             )
             Spacer(Modifier.height(10.dp))
-            TextField(
+            GlassTextField(
                 value = system,
                 onValueChange = { system = it.take(4000) },
                 label = "人格提示词（必填，≤4000 字）",
@@ -974,7 +963,7 @@ private fun PresetEditorDialog(
                 color = GlassText.tertiary,
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 10.dp),
             )
-            TextField(
+            GlassTextField(
                 value = avatar,
                 onValueChange = { avatar = it.take(2000) },
                 label = "形象提示词（可选，≤2000 字）",

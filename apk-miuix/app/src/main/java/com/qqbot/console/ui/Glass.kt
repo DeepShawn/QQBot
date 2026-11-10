@@ -13,6 +13,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -49,6 +50,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -59,19 +61,25 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.TextFieldDefaults
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.math.sin
+import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 
 // ============================================================ Design tokens（深/浅两套 · 液态玻璃）
@@ -435,6 +443,107 @@ fun GlassDialog(
         onDismissRequest = onDismissRequest,
         content = content,
     )
+}
+
+/**
+ * 玻璃底部动作面板（长按菜单 / 动作选择）：MIUIX OverlayBottomSheet + 玻璃 Overlay 材质。
+ * 拖拽关闭、spring 进出由 MIUIX 内置；条目用 [GlassActionRow]。
+ */
+@Composable
+fun GlassSheet(
+    show: Boolean,
+    title: String? = null,
+    onDismissRequest: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    OverlayBottomSheet(
+        show = show,
+        title = title,
+        backgroundColor = GlassTokens.overlayFill,
+        cornerRadius = GlassRadius.xl,
+        dragHandleColor = GlassText.tertiary,
+        onDismissRequest = onDismissRequest,
+        content = content,
+    )
+}
+
+/**
+ * 玻璃菜单行：标题 + 可选副标题；按下时白 8% 高亮、圆角裁切；危险操作用红色。
+ */
+@Composable
+fun GlassActionRow(
+    title: String,
+    subtitle: String? = null,
+    danger: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val shape = RoundedCornerShape(GlassRadius.md)
+    val color = if (danger) GlassDanger else GlassText.primary
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (pressed) Color.White.copy(alpha = 0.08f) else Color.Transparent)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = color)
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, fontSize = 13.sp, color = GlassText.secondary)
+            }
+        }
+    }
+}
+
+/**
+ * 玻璃输入框：MIUIX TextField 套 Inset 玻璃容器，聚焦时主题色描边。
+ * 统一单行/多行/数字/等宽代码输入样式。
+ */
+@Composable
+fun GlassTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = true,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else 6,
+    numeric: Boolean = false,
+    mono: Boolean = false,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val accent = LocalAccent.current
+    val shape = RoundedCornerShape(GlassRadius.md)
+    Box(
+        modifier
+            .glass(GlassLevel.Inset, shape)
+            .then(if (focused) Modifier.border(1.5.dp, accent.primary, shape) else Modifier)
+            .padding(horizontal = 2.dp, vertical = 1.dp),
+    ) {
+        TextField(
+            value = value,
+            onValueChange = onValueChange,
+            label = label,
+            singleLine = singleLine,
+            minLines = minLines,
+            maxLines = maxLines,
+            textStyle = if (mono) TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp) else TextStyle.Default,
+            colors = TextFieldDefaults.textFieldColors(
+                backgroundColor = Color.Transparent,
+                labelColor = if (focused) accent.primary else GlassText.tertiary,
+                borderColor = Color.Transparent,
+            ),
+            keyboardOptions = if (numeric) KeyboardOptions(keyboardType = KeyboardType.Number) else KeyboardOptions.Default,
+            modifier = Modifier
+                .fillMaxWidth()
+                .onFocusChanged { focused = it.isFocused },
+        )
+    }
 }
 
 /**

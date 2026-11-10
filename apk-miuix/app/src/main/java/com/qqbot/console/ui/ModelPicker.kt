@@ -69,7 +69,7 @@ fun ModelPickerDialog(
         }
     }
 
-    OverlayDialog(
+    GlassDialog(
         show = true,
         title = "选择模型",
         onDismissRequest = onDismiss,
@@ -152,7 +152,7 @@ fun ModelPickerDialog(
 
             Spacer(Modifier.height(12.dp))
             if (manual) {
-                TextField(
+                GlassTextField(
                     value = manualText,
                     onValueChange = { manualText = it },
                     label = "模型名称",

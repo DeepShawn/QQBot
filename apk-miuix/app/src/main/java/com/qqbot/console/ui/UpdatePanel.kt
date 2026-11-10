@@ -34,7 +34,7 @@ fun UpdatePromptHost() {
     val scope = rememberCoroutineScope()
     val info = AppUpdates.available ?: return
 
-    OverlayDialog(
+    GlassDialog(
         show = AppUpdates.prompt,
         title = "发现新版本 ${info.version}" + (if (info.isLocal) "（本地）" else ""),
         onDismissRequest = { if (!AppUpdates.downloading) AppUpdates.prompt = false },

@@ -115,7 +115,7 @@ fun PythonRunnerDialog(onDismiss: () -> Unit) {
         Store.toast = "已复制输出"
     }
 
-    OverlayDialog(
+    GlassDialog(
         show = true,
         title = "运行 Python 代码",
         onDismissRequest = { if (!running) onDismiss() },
@@ -130,14 +130,15 @@ fun PythonRunnerDialog(onDismiss: () -> Unit) {
             )
             Spacer(Modifier.height(10.dp))
 
-            TextField(
+            GlassTextField(
                 value = code,
                 onValueChange = { code = it },
                 label = "Python 代码",
                 modifier = Modifier.fillMaxWidth().heightIn(min = 190.dp).padding(bottom = 4.dp),
+                singleLine = false,
                 minLines = 10,
                 maxLines = 20,
-                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
+                mono = true,
             )
 
             if (running) {

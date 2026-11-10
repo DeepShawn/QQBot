@@ -175,14 +175,14 @@ fun TaskManagerPage(padding: PaddingValues, scrollBehavior: ScrollBehavior, onBa
         }
 
         group("运行命令") {
-            TextField(
+            GlassTextField(
                 value = command,
                 onValueChange = { command = it },
                 label = "命令（在机器人运行环境里执行）",
                 singleLine = false,
                 minLines = 3,
                 maxLines = 8,
-                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 13.sp),
+                mono = true,
                 modifier = Modifier.fillMaxWidth().padding(12.dp),
             )
             EditPreference(
@@ -303,7 +303,7 @@ private fun TaskDetailDialog(
         Store.toast = "已复制输出"
     }
 
-    OverlayDialog(show = true, title = "任务详情", onDismissRequest = onClose) {
+    GlassDialog(show = true, title = "任务详情", onDismissRequest = onClose) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 580.dp).verticalScroll(rememberScrollState()),
         ) {
@@ -551,7 +551,7 @@ private fun SkillViewDialog(
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
 
-    OverlayDialog(show = true, title = name, onDismissRequest = onClose) {
+    GlassDialog(show = true, title = name, onDismissRequest = onClose) {
         Column(
             Modifier.fillMaxWidth().heightIn(max = 580.dp).verticalScroll(rememberScrollState()),
         ) {
@@ -606,7 +606,7 @@ private fun SkillEditDialog(
     var content by remember { mutableStateOf(initialContent) }
     var error by remember { mutableStateOf("") }
 
-    OverlayDialog(
+    GlassDialog(
         show = true,
         title = if (isNew) "新建技能" else "编辑技能",
         onDismissRequest = onDismiss,
@@ -614,21 +614,21 @@ private fun SkillEditDialog(
         Column(
             Modifier.fillMaxWidth().heightIn(max = 600.dp).verticalScroll(rememberScrollState()),
         ) {
-            TextField(
+            GlassTextField(
                 value = name,
                 onValueChange = { name = it },
                 label = "技能名称（文件名，如 my-skill.md）",
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
             )
-            TextField(
+            GlassTextField(
                 value = content,
                 onValueChange = { content = it },
                 label = "技能内容（Markdown）",
                 singleLine = false,
                 minLines = 8,
                 maxLines = 18,
-                textStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                mono = true,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
             )
             if (error.isNotBlank()) {

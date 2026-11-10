@@ -210,7 +210,7 @@ fun RecordsPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
 
     // 文件内容
     if (openFile != null) {
-        OverlayDialog(
+        GlassDialog(
             show = true,
             title = openFile!!.optStr("name"),
             onDismissRequest = { openFile = null },
@@ -271,7 +271,7 @@ private fun MsgDialog(
     messages: List<JSONObject>,
     onDismiss: () -> Unit,
 ) {
-    OverlayDialog(show = show, title = title, summary = "${messages.size} 条", onDismissRequest = onDismiss) {
+    GlassDialog(show = show, title = title, summary = "${messages.size} 条", onDismissRequest = onDismiss) {
         if (messages.isEmpty()) {
             Text("这个群最近没有读到消息", fontSize = 14.sp)
         } else {
@@ -333,7 +333,7 @@ fun SessionListDialog(
     onDismiss: () -> Unit,
     onPick: (JSONObject) -> Unit,
 ) {
-    OverlayDialog(show = show, title = "对话记忆", onDismissRequest = onDismiss) {
+    GlassDialog(show = show, title = "对话记忆", onDismissRequest = onDismiss) {
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp)) {
             items(sessions.size) { i ->
                 val s = sessions[i]
@@ -355,7 +355,7 @@ fun SessionDetailDialog(session: JSONObject?, onDismiss: () -> Unit) {
     if (session == null) return
     val msgs = session.optJSONArray("messages")?.objects().orEmpty()
     val botName = Store.str("config", "bot", "name").ifBlank { "机器人" }
-    OverlayDialog(show = true, title = sessionTitle(session.optStr("key")), onDismissRequest = onDismiss) {
+    GlassDialog(show = true, title = sessionTitle(session.optStr("key")), onDismissRequest = onDismiss) {
         LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
             items(msgs.size) { i ->
                 val m = msgs[i]
