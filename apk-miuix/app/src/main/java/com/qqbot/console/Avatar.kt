@@ -8,6 +8,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /** 机器人形象参考图接口：GET / POST / DELETE /api/avatar/reference（管理台 127.0.0.1:8080）。 */
@@ -23,10 +24,20 @@ object AvatarApi {
         .writeTimeout(120, TimeUnit.SECONDS)   // 上传 base64 可能较大
         .build()
 
-    /** 拉取已有参考图；404 / 服务未就绪视为没有（error 为空），其它失败给中文 error。 */
-    suspend fun fetch(): AvatarRef = withContext(Dispatchers.IO) {
+    /** 参考图 URL：preset 为空 / custom 表示全局参考图。 */
+    private fun url(preset: String?): String {
+        val p = preset?.trim().orEmpty()
+        return if (p.isEmpty() || p == "custom") {
+            BASE + PATH
+        } else {
+            BASE + PATH + "?preset=" + URLEncoder.encode(p, "UTF-8")
+        }
+    }
+
+    /** 拉取参考图（preset 为空/custom = 全局）；404 / 服务未就绪视为没有（error 为空）。 */
+    suspend fun fetch(preset: String? = null): AvatarRef = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder().url(BASE + PATH).get().build()
+            val req = Request.Builder().url(url(preset)).get().build()
             client.newCall(req).execute().use { r ->
                 if (r.code == 404) {
                     AvatarRef()
@@ -42,14 +53,15 @@ object AvatarApi {
         }
     }
 
-    /** 上传参考图；成功返回 null，失败返回中文错误。 */
-    suspend fun upload(bytes: ByteArray, filename: String): String? = withContext(Dispatchers.IO) {
+    /** 上传参考图（preset 为空/custom = 全局）；成功返回 null，失败返回中文错误。 */
+    suspend fun upload(bytes: ByteArray, filename: String, preset: String? = null): String? = withContext(Dispatchers.IO) {
         try {
-            val body = JSONObject()
+            val obj = JSONObject()
                 .put("data_base64", Base64.encodeToString(bytes, Base64.NO_WRAP))
                 .put("filename", filename.ifBlank { "reference.png" })
-                .toString()
-                .toRequestBody(JSON)
+            val p = preset?.trim().orEmpty()
+            if (p.isNotEmpty() && p != "custom") obj.put("preset", p)
+            val body = obj.toString().toRequestBody(JSON)
             val req = Request.Builder().url(BASE + PATH).post(body).build()
             client.newCall(req).execute().use { r ->
                 val text = r.body?.string().orEmpty()
@@ -69,10 +81,10 @@ object AvatarApi {
         }
     }
 
-    /** 删除参考图；成功返回 null，失败返回中文错误。 */
-    suspend fun delete(): String? = withContext(Dispatchers.IO) {
+    /** 删除参考图（preset 为空/custom = 全局）；成功返回 null，失败返回中文错误。 */
+    suspend fun delete(preset: String? = null): String? = withContext(Dispatchers.IO) {
         try {
-            val req = Request.Builder().url(BASE + PATH).delete().build()
+            val req = Request.Builder().url(url(preset)).delete().build()
             client.newCall(req).execute().use { r ->
                 val text = r.body?.string().orEmpty()
                 val obj = try {

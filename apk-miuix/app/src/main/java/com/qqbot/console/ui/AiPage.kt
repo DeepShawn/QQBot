@@ -208,6 +208,42 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
         }
     }
 
+    // 预设卡片菜单触发的「上传/更换参考图」：记录目标预设，选图后带 preset id 上传
+    var presetRefTarget by remember { mutableStateOf<JSONObject?>(null) }
+    val presetRefPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val target = presetRefTarget
+        if (uri != null && target != null) {
+            scope.launch {
+                val presetId = target.optStr("id")
+                val presetName = target.optStr("name").ifBlank { presetId }
+                var picked: ByteArray? = null
+                val err = withContext(Dispatchers.IO) {
+                    try {
+                        val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        when {
+                            bytes == null -> "读取图片失败"
+                            bytes.size > 8 * 1024 * 1024 -> "图片太大（超过 8MB），换一张小一点的"
+                            else -> {
+                                picked = bytes
+                                AvatarApi.upload(bytes, "reference.png", presetId)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        "读取图片失败：${e.message ?: "未知错误"}"
+                    }
+                }
+                presetRefTarget = null
+                if (err == null && picked != null) {
+                    Store.toast = "已上传「$presetName」的参考图"
+                } else {
+                    Store.toast = err ?: "上传参考图失败"
+                }
+            }
+        } else {
+            presetRefTarget = null
+        }
+    }
+
     // 进页面时拉一次账号状态（登录 / 退出后也会刷新），顺便探测有没有参考图（404 = 没有）
     LaunchedEffect(Unit) {
         AccountsStore.refresh()
@@ -432,9 +468,10 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     onClick = { copyPresetToCustom(preset) },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 )
-                Hint("形象提示词跟随预设；点「编辑为自定义」可复制到自定义后修改。参考图仍按下面单独设置。")
+                Hint("形象提示词跟随预设；点「编辑为自定义」可复制到自定义后修改。参考图也随预设变化（在预设卡片长按菜单里设置）。")
             }
 
+            if (preset == null) {
             val thumb = remember(refBytes) { refBytes?.let { decodeThumbnail(it) } }
             if (thumb != null) {
                 Image(
@@ -501,7 +538,10 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 )
             }
-            Hint("参考图只在生成机器人形象 / 头像时作参考，不会公开；生成功能在「画图」工具里生效。")
+            Hint("这是「自定义」人格的参考图；每个预设都可以单独设置参考图，未设置时回退到这里。参考图不会公开，生成功能在「画图」工具里生效。")
+            } else {
+                Hint("参考图随预设变化：每个预设可单独上传（在预设卡片长按菜单里设置），未设置时回退全局参考图；生成形象时自动使用当前预设的图。")
+            }
         }
 
         group("什么时候回复") {
@@ -614,6 +654,22 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 presetMenu = null
                 copyPresetToCustom(p)
             },
+            onUploadRef = {
+                presetMenu = null
+                presetRefTarget = p
+                presetRefPicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            onRemoveRef = {
+                presetMenu = null
+                val presetId = p.optStr("id")
+                val presetName = p.optStr("name").ifBlank { presetId }
+                scope.launch {
+                    val err = AvatarApi.delete(presetId)
+                    Store.toast = err ?: "已移除「$presetName」的参考图（回退全局）"
+                }
+            },
             onDismiss = { presetMenu = null },
         )
     }
@@ -621,6 +677,7 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     presetEditing?.let { editing ->
         PresetEditorDialog(
             initial = editing.original,
+            presetId = editing.original?.optStr("id"),
             onSave = { fields ->
                 savePreset(if (editing.isNew) null else editing.original, fields)
                 presetEditing = null
@@ -775,6 +832,8 @@ private fun PresetMenuDialog(
     onDelete: () -> Unit,
     onDuplicate: () -> Unit,
     onCopyCustom: () -> Unit,
+    onUploadRef: () -> Unit,
+    onRemoveRef: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val name = preset.optStr("name").ifBlank { preset.optStr("id") }
@@ -785,6 +844,8 @@ private fun PresetMenuDialog(
             if (isUser) {
                 TextButton(text = "编辑", onClick = onEdit, modifier = Modifier.fillMaxWidth())
             }
+            TextButton(text = "上传 / 更换参考图", onClick = onUploadRef, modifier = Modifier.fillMaxWidth())
+            TextButton(text = "移除参考图", onClick = onRemoveRef, modifier = Modifier.fillMaxWidth())
             TextButton(text = "复制为我的预设", onClick = onDuplicate, modifier = Modifier.fillMaxWidth())
             TextButton(text = "复制为自定义人格", onClick = onCopyCustom, modifier = Modifier.fillMaxWidth())
             if (isUser) {
@@ -810,6 +871,7 @@ private fun PresetMenuDialog(
 @Composable
 private fun PresetEditorDialog(
     initial: JSONObject?,
+    presetId: String?,
     onSave: (JSONObject) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -818,6 +880,53 @@ private fun PresetEditorDialog(
     var system by remember { mutableStateOf(initial?.optStr("system_prompt").orEmpty()) }
     var avatar by remember { mutableStateOf(initial?.optStr("avatar_prompt").orEmpty()) }
     var error by remember { mutableStateOf("") }
+
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var refBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var refBusy by remember { mutableStateOf(false) }
+    var refError by remember { mutableStateOf("") }
+
+    LaunchedEffect(presetId) {
+        if (presetId != null) {
+            val r = AvatarApi.fetch(presetId)
+            refBytes = r.bytes
+            refError = r.error
+        }
+    }
+
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null && presetId != null) {
+            scope.launch {
+                refBusy = true
+                refError = ""
+                var picked: ByteArray? = null
+                val err = withContext(Dispatchers.IO) {
+                    try {
+                        val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        when {
+                            bytes == null -> "读取图片失败"
+                            bytes.size > 8 * 1024 * 1024 -> "图片太大（超过 8MB），换一张小一点的"
+                            else -> {
+                                picked = bytes
+                                AvatarApi.upload(bytes, "reference.png", presetId)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        "读取图片失败：${e.message ?: "未知错误"}"
+                    }
+                }
+                refBusy = false
+                if (err == null && picked != null) {
+                    refBytes = picked
+                    Store.toast = "参考图已保存"
+                } else {
+                    refError = err ?: "上传参考图失败"
+                    Store.toast = refError
+                }
+            }
+        }
+    }
 
     fun counter(current: Int, max: Int): String = "$current/$max"
 
@@ -880,6 +989,75 @@ private fun PresetEditorDialog(
                 color = GlassText.tertiary,
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 10.dp),
             )
+
+            Text(
+                "参考图（这个预设单独使用；未设置时回退全局参考图）",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                color = GlassText.primary,
+            )
+            Spacer(Modifier.height(6.dp))
+            if (presetId == null) {
+                Text(
+                    "先保存预设，保存后可在卡片长按菜单里上传这个预设的参考图。",
+                    fontSize = 12.sp,
+                    color = GlassText.secondary,
+                )
+            } else {
+                val thumb = remember(refBytes) { refBytes?.let { decodeThumbnail(it) } }
+                if (thumb != null) {
+                    Image(
+                        bitmap = thumb,
+                        contentDescription = "预设参考图",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .border(1.dp, GlassText.divider, RoundedCornerShape(16.dp)),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                } else {
+                    Text("未设置（会使用全局参考图）", fontSize = 12.sp, color = GlassText.secondary)
+                    Spacer(Modifier.height(8.dp))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TextButton(
+                        text = if (refBusy) "处理中…" else if (thumb == null) "选择参考图" else "更换参考图",
+                        onClick = {
+                            picker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (thumb != null) {
+                        TextButton(
+                            text = "移除",
+                            onClick = {
+                                scope.launch {
+                                    refBusy = true
+                                    refError = ""
+                                    val err = AvatarApi.delete(presetId)
+                                    refBusy = false
+                                    if (err == null) {
+                                        refBytes = null
+                                        Store.toast = "已移除这个预设的参考图（回退全局）"
+                                    } else {
+                                        refError = err
+                                        Store.toast = err
+                                    }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+                if (refError.isNotBlank()) {
+                    Text(refError, fontSize = 12.sp, color = Warn)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
             if (error.isNotBlank()) {
                 Text(error, fontSize = 13.sp, color = Bad)
                 Spacer(Modifier.height(8.dp))

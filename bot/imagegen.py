@@ -69,6 +69,7 @@ __all__ = [
     "ERROR_IMAGE_ACCOUNT",
     "looks_like_avatar_request",
     "active_preset",
+    "preset_by_id",
     "avatar_prompt",
     "avatar_reference_path",
     "generate_with_reference",
@@ -795,6 +796,29 @@ def active_preset(ai_cfg: dict | None) -> dict | None:
     return None
 
 
+_PRESET_ID_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+
+
+def preset_by_id(ai_cfg: dict | None, preset_id) -> dict | None:
+    """按 id 找预设（custom/非法 id 返回 None）。"""
+    target = str(preset_id or "").strip().lower()
+    if not target or target == "custom" or not _PRESET_ID_RE.fullmatch(target):
+        return None
+    cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
+    presets = cfg.get("presets")
+    if isinstance(presets, dict):
+        presets = [
+            dict(value, id=key) if isinstance(value, dict) else value
+            for key, value in presets.items()
+        ]
+    if not isinstance(presets, list):
+        return None
+    for item in presets:
+        if isinstance(item, dict) and str(item.get("id") or "").strip().lower() == target:
+            return item
+    return None
+
+
 def avatar_prompt(ai_cfg: dict | None) -> str:
     """形象提示词：active_preset 命中时优先用预设 avatar_prompt，否则顶层 avatar.prompt。"""
     cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
@@ -807,26 +831,29 @@ def avatar_prompt(ai_cfg: dict | None) -> str:
     return str(avatar.get("prompt") or "").strip()
 
 
-def avatar_reference_path(ai_cfg: dict | None, base_dir=None) -> Path | None:
-    """avatar.reference_image 指向的本地参考图；不存在返回 None。"""
-    cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
-    avatar = cfg.get("avatar") if isinstance(cfg.get("avatar"), dict) else {}
-    reference = str(avatar.get("reference_image") or "").strip()
-    if not reference:
-        return None
-    raw = Path(reference)
-    bot_dir = Path(__file__).resolve().parent
-    candidates = []
+def _avatar_candidate_paths(reference: str, base_dir=None) -> list[Path]:
+    """参考图候选路径（相对路径按 base_dir / bot 目录 / 仓库根依次尝试）。"""
+    text = str(reference or "").strip()
+    if not text:
+        return []
+    raw = Path(text)
     if raw.is_absolute():
-        candidates.append(raw)
-    else:
-        bases = []
-        if base_dir is not None:
-            bases.append(Path(base_dir))
-        bases += [bot_dir, bot_dir.parent]
-        for base in bases:
-            candidates.append(base / reference)
-            candidates.append(base / "bot" / reference)
+        return [raw]
+    if ".." in raw.parts:
+        return []
+    bot_dir = Path(__file__).resolve().parent
+    bases = []
+    if base_dir is not None:
+        bases.append(Path(base_dir))
+    bases += [bot_dir, bot_dir.parent]
+    candidates: list[Path] = []
+    for base in bases:
+        candidates.append(base / text)
+        candidates.append(base / "bot" / text)
+    return candidates
+
+
+def _first_existing(candidates: list[Path]) -> Path | None:
     for path in candidates:
         try:
             if path.is_file():
@@ -834,6 +861,32 @@ def avatar_reference_path(ai_cfg: dict | None, base_dir=None) -> Path | None:
         except OSError:
             continue
     return None
+
+
+def avatar_reference_path(
+    ai_cfg: dict | None, base_dir=None, preset_id=None
+) -> Path | None:
+    """参考图路径：预设自己的参考图优先（含 data/avatar/<id>.png），缺失回退全局。
+
+    preset_id 省略时按 active_preset；custom/未知预设走全局 avatar.reference_image。
+    """
+    cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
+    if preset_id is not None and str(preset_id).strip().lower() not in ("", "custom"):
+        preset = preset_by_id(cfg, preset_id)
+    else:
+        preset = active_preset(cfg)
+    if preset is not None:
+        reference = str(preset.get("reference_image") or "").strip()
+        if reference:
+            found = _first_existing(_avatar_candidate_paths(reference, base_dir))
+            if found is not None:
+                return found
+        # 预设 reference_image 缺失/文件不存在 -> 回退全局（不猜默认文件）
+    avatar = cfg.get("avatar") if isinstance(cfg.get("avatar"), dict) else {}
+    reference = str(avatar.get("reference_image") or "").strip()
+    if not reference:
+        return None
+    return _first_existing(_avatar_candidate_paths(reference, base_dir))
 
 
 def _multipart_body(fields: dict, files: list) -> tuple[bytes, str]:

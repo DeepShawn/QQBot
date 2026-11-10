@@ -309,6 +309,61 @@ def _restore_profile_keys(old: dict, new: dict):
                 prof["api_key"] = prev["api_key"]
 
 
+AVATAR_PRESET_RE = re.compile(r"^[a-z0-9_-]{1,32}$")
+
+
+def _default_presets() -> list:
+    try:
+        import config as _config
+
+        items = _config.DEFAULTS["plugins"]["ai_chat"]["presets"]
+        return [dict(item) for item in items if isinstance(item, dict)]
+    except Exception:
+        return []
+
+
+def _valid_preset_id(value) -> str:
+    pid = str(value or "").strip().lower()
+    if not pid or pid == "custom":
+        return ""
+    if not AVATAR_PRESET_RE.fullmatch(pid):
+        raise ValueError("预设 id 不合法")
+    return pid
+
+
+def _sanitize_presets(ai: dict) -> None:
+    presets_raw = ai.get("presets")
+    if not isinstance(presets_raw, list):
+        presets_raw = _default_presets()
+    cleaned = []
+    seen_ids = set()
+    for item in presets_raw:
+        if not isinstance(item, dict):
+            continue
+        preset_id = str(item.get("id") or "").strip().lower()
+        if not AVATAR_PRESET_RE.fullmatch(preset_id) or preset_id in seen_ids:
+            continue
+        seen_ids.add(preset_id)
+        reference = str(item.get("reference_image") or "").strip().replace("\\", "/")
+        if reference != f"data/avatar/{preset_id}.png":
+            reference = ""
+        cleaned.append(
+            {
+                "id": preset_id,
+                "name": str(item.get("name") or "").strip()[:40] or preset_id,
+                "emoji": str(item.get("emoji") or "").strip()[:8],
+                "system_prompt": str(item.get("system_prompt") or "")[:4000],
+                "avatar_prompt": str(item.get("avatar_prompt") or "")[:2000],
+                "reference_image": reference,
+            }
+        )
+    ai["presets"] = cleaned
+    active = str(ai.get("active_preset") or "custom").strip().lower() or "custom"
+    if active != "custom" and active not in seen_ids:
+        active = "custom"
+    ai["active_preset"] = active
+
+
 def sanitize_config(cfg: dict) -> dict:
     """防止误填导致烧钱/报错：参数超范围就夹回安全区间。"""
     plugins = cfg.setdefault("plugins", {})
@@ -333,51 +388,16 @@ def sanitize_config(cfg: dict) -> dict:
         _clamp_int(prof, "max_tokens", 64, 8192, 4096)
         if not str(prof.get("id") or "").strip():
             prof["id"] = "profile"
-    presets_raw = ai.get("presets")
-
-    def _default_presets() -> list:
-        try:
-            import config as _config
-
-            items = _config.DEFAULTS["plugins"]["ai_chat"]["presets"]
-            return [dict(item) for item in items if isinstance(item, dict)]
-        except Exception:
-            return []
-
-    if not isinstance(presets_raw, list):
-        presets_raw = _default_presets()
-    cleaned_presets = []
-    seen_ids = set()
-    for item in presets_raw:
-        if not isinstance(item, dict):
-            continue
-        preset_id = str(item.get("id") or "").strip().lower()
-        if not re.fullmatch(r"[a-z0-9_-]{1,32}", preset_id):
-            continue
-        if preset_id in seen_ids:
-            continue
-        seen_ids.add(preset_id)
-        cleaned_presets.append(
-            {
-                "id": preset_id,
-                "name": str(item.get("name") or "").strip()[:40] or preset_id,
-                "emoji": str(item.get("emoji") or "").strip()[:8],
-                "system_prompt": str(item.get("system_prompt") or "")[:4000],
-                "avatar_prompt": str(item.get("avatar_prompt") or "")[:2000],
-            }
-        )
-    ai["presets"] = cleaned_presets
-    active = str(ai.get("active_preset") or "custom").strip().lower() or "custom"
-    if active != "custom" and active not in seen_ids:
-        active = "custom"
-    ai["active_preset"] = active
+    _sanitize_presets(ai)
 
     avatar = ai.get("avatar")
     if not isinstance(avatar, dict):
         avatar = {}
     avatar["prompt"] = str(avatar.get("prompt") or "")[:2000]
     reference = str(avatar.get("reference_image") or "").strip().replace("\\", "/")
-    if reference and not reference.startswith("data/avatar/"):
+    if reference and (
+        not reference.startswith("data/avatar/") or ".." in reference.split("/")
+    ):
         reference = ""
     avatar["reference_image"] = reference
     ai["avatar"] = avatar
@@ -548,8 +568,14 @@ def avatar_dir() -> Path:
     return Path(DATA_DIR) / "avatar"
 
 
-def avatar_reference_path() -> Path:
-    return avatar_dir() / "reference.png"
+def _normalize_preset_id(value) -> str:
+    """preset 参数 -> 合法 id；custom/空 -> ""（全局参考图）。"""
+    return _valid_preset_id(value)
+
+
+def avatar_reference_path(preset_id=None) -> Path:
+    pid = _normalize_preset_id(preset_id)
+    return avatar_dir() / (f"{pid}.png" if pid else "reference.png")
 
 
 def _detect_image_mime(raw: bytes) -> str:
@@ -648,48 +674,10 @@ def _avatar_to_png(raw: bytes) -> tuple[bytes, int, int]:
 
 
 def _set_avatar_reference(value: str) -> None:
+    """全局（custom）参考图路径写回 plugins.ai_chat.avatar.reference_image。"""
     cfg = load_config()
     plugins = cfg.setdefault("plugins", {})
     ai = plugins.setdefault("ai_chat", {})
-    presets_raw = ai.get("presets")
-
-    def _default_presets() -> list:
-        try:
-            import config as _config
-
-            items = _config.DEFAULTS["plugins"]["ai_chat"]["presets"]
-            return [dict(item) for item in items if isinstance(item, dict)]
-        except Exception:
-            return []
-
-    if not isinstance(presets_raw, list):
-        presets_raw = _default_presets()
-    cleaned_presets = []
-    seen_ids = set()
-    for item in presets_raw:
-        if not isinstance(item, dict):
-            continue
-        preset_id = str(item.get("id") or "").strip().lower()
-        if not re.fullmatch(r"[a-z0-9_-]{1,32}", preset_id):
-            continue
-        if preset_id in seen_ids:
-            continue
-        seen_ids.add(preset_id)
-        cleaned_presets.append(
-            {
-                "id": preset_id,
-                "name": str(item.get("name") or "").strip()[:40] or preset_id,
-                "emoji": str(item.get("emoji") or "").strip()[:8],
-                "system_prompt": str(item.get("system_prompt") or "")[:4000],
-                "avatar_prompt": str(item.get("avatar_prompt") or "")[:2000],
-            }
-        )
-    ai["presets"] = cleaned_presets
-    active = str(ai.get("active_preset") or "custom").strip().lower() or "custom"
-    if active != "custom" and active not in seen_ids:
-        active = "custom"
-    ai["active_preset"] = active
-
     avatar = ai.get("avatar")
     if not isinstance(avatar, dict):
         avatar = {}
@@ -698,9 +686,38 @@ def _set_avatar_reference(value: str) -> None:
     write_json(CONFIG_PATH, cfg)
 
 
-def api_avatar_reference_get():
-    """返回参考图 PNG 字节；没有则 None。"""
-    path = avatar_reference_path()
+def _set_preset_reference(preset_id: str, value: str) -> None:
+    """预设参考图路径写回该 preset 的 reference_image。"""
+    pid = _normalize_preset_id(preset_id)
+    if not pid:
+        raise ValueError("预设 id 不合法")
+    cfg = load_config()
+    plugins = cfg.setdefault("plugins", {})
+    ai = plugins.setdefault("ai_chat", {})
+    presets = ai.get("presets")
+    if not isinstance(presets, list):
+        presets = _default_presets()
+    found = None
+    for item in presets:
+        if isinstance(item, dict) and str(item.get("id") or "").strip().lower() == pid:
+            found = item
+            break
+    if found is None:
+        default = next(
+            (p for p in _default_presets() if str(p.get("id")) == pid), None
+        )
+        if default is None:
+            raise ValueError("预设不存在")
+        found = dict(default)
+        presets.append(found)
+    found["reference_image"] = str(value or "")
+    ai["presets"] = presets
+    write_json(CONFIG_PATH, cfg)
+
+
+def api_avatar_reference_get(preset_id=None) -> bytes | None:
+    """返回参考图 PNG 字节；preset 省略/custom 用全局；没有则 None。"""
+    path = avatar_reference_path(preset_id)
     try:
         if path.is_file():
             return path.read_bytes()
@@ -709,10 +726,15 @@ def api_avatar_reference_get():
     return None
 
 
-def api_avatar_reference_post(body: dict) -> dict:
-    raw, mime = _avatar_decode_body(body)
+def api_avatar_reference_post(body: dict, preset_id=None) -> dict:
+    """上传参考图；有 preset 时存 data/avatar/<id>.png 并写回该预设。"""
+    raw_preset = preset_id
+    if raw_preset in (None, "") and isinstance(body, dict):
+        raw_preset = body.get("preset")
+    pid = _normalize_preset_id(raw_preset)
+    raw, _mime = _avatar_decode_body(body)
     png, width, height = _avatar_to_png(raw)
-    path = avatar_reference_path()
+    path = avatar_reference_path(pid)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".png.tmp")
     try:
@@ -724,24 +746,33 @@ def api_avatar_reference_post(body: dict) -> dict:
         except OSError:
             pass
         raise
-    _set_avatar_reference(AVATAR_REL_PATH)
+    rel_path = f"data/avatar/{pid}.png" if pid else AVATAR_REL_PATH
+    if pid:
+        _set_preset_reference(pid, rel_path)
+    else:
+        _set_avatar_reference(rel_path)
     return {
         "ok": True,
-        "path": AVATAR_REL_PATH,
+        "path": rel_path,
+        "preset": pid or "custom",
         "width": width,
         "height": height,
         "bytes": len(png),
     }
 
 
-def api_avatar_reference_delete() -> dict:
-    path = avatar_reference_path()
+def api_avatar_reference_delete(preset_id=None) -> dict:
+    pid = _normalize_preset_id(preset_id)
+    path = avatar_reference_path(pid)
     try:
         path.unlink(missing_ok=True)
     except Exception as e:
         return {"ok": False, "error": f"删除参考图失败: {e}"}
-    _set_avatar_reference("")
-    return {"ok": True}
+    if pid:
+        _set_preset_reference(pid, "")
+    else:
+        _set_avatar_reference("")
+    return {"ok": True, "preset": pid or "custom"}
 
 
 def api_patch_config(patch: dict) -> dict:
@@ -2308,7 +2339,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(_api_safe(lambda: api_skills_get(skill_name),
                                             "读取技能失败，请稍后再试"))
             if path == "/api/avatar/reference":
-                data = api_avatar_reference_get()
+                try:
+                    data = api_avatar_reference_get((qs.get("preset") or [""])[0])
+                except ValueError as e:
+                    return self._error(str(e), 400)
                 if data is None:
                     return self._error("还没有设置参考图", 404)
                 return self._send(200, data, "image/png")
@@ -2356,10 +2390,15 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(f"内部错误: {e}", 500)
 
     def do_DELETE(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         try:
             if path == "/api/avatar/reference":
-                return self._json(api_avatar_reference_delete())
+                try:
+                    preset = (parse_qs(parsed.query).get("preset") or [""])[0]
+                    return self._json(api_avatar_reference_delete(preset))
+                except ValueError as e:
+                    return self._error(str(e), 400)
             return self._error("not found", 404)
         except Exception as e:
             return self._error(f"内部错误: {e}", 500)
@@ -2373,7 +2412,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json({"ok": True, "config": cfg})
             if path == "/api/avatar/reference":
                 try:
-                    return self._json(api_avatar_reference_post(body))
+                    preset = (
+                        (body.get("preset") if isinstance(body, dict) else "")
+                        or (parse_qs(urlparse(self.path).query).get("preset") or [""])[0]
+                    )
+                    return self._json(api_avatar_reference_post(body, preset))
                 except ValueError as e:
                     return self._error(str(e), 400)
                 except Exception:
