@@ -786,14 +786,26 @@ def avatar_reference_path(ai_cfg: dict | None, base_dir=None) -> Path | None:
     reference = str(avatar.get("reference_image") or "").strip()
     if not reference:
         return None
-    path = Path(reference)
-    if not path.is_absolute():
-        base = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parent.parent
-        path = base / reference
-    try:
-        return path if path.is_file() else None
-    except OSError:
-        return None
+    raw = Path(reference)
+    bot_dir = Path(__file__).resolve().parent
+    candidates = []
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        bases = []
+        if base_dir is not None:
+            bases.append(Path(base_dir))
+        bases += [bot_dir, bot_dir.parent]
+        for base in bases:
+            candidates.append(base / reference)
+            candidates.append(base / "bot" / reference)
+    for path in candidates:
+        try:
+            if path.is_file():
+                return path
+        except OSError:
+            continue
+    return None
 
 
 def _multipart_body(fields: dict, files: list) -> tuple[bytes, str]:
