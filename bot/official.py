@@ -591,6 +591,32 @@ class OfficialClient:
         return hit, mark_ids
 
     @staticmethod
+    def _attachment_files(data: dict) -> list[dict]:
+        """非图片附件 -> file segment（ai_chat 会下载并抽取文本）。"""
+        segments: list[dict] = []
+        attachments = data.get("attachments")
+        if not isinstance(attachments, list):
+            return segments
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if url.startswith("//"):
+                url = "https:" + url
+            elif url and not url.startswith(("http://", "https://")) and "." in url.split("/")[0]:
+                url = "https://" + url
+            if not url.startswith(("http://", "https://")):
+                continue
+            mime = str(item.get("content_type") or "").lower()
+            if mime.startswith("image"):
+                continue
+            name = str(item.get("filename") or item.get("name") or "文件").strip() or "文件"
+            segments.append(
+                {"type": "file", "data": {"file": name, "url": url, "name": name}}
+            )
+        return segments
+
+    @staticmethod
     def _attachment_images(data: dict) -> list[dict]:
         """attachments 里的图片 -> image segment（data.file/url 都是图片地址）。"""
         segments: list[dict] = []
@@ -648,7 +674,7 @@ class OfficialClient:
                 item = stack.pop(0)
                 if not isinstance(item, dict):
                     continue
-                images += self._attachment_images(item)
+                images += self._attachment_images(item) + self._attachment_files(item)
                 txt = _strip_raw_mentions(str(item.get("content") or ""))
                 if txt:
                     texts.append(txt)
@@ -661,7 +687,7 @@ class OfficialClient:
             for entry in reversed(self._msg_cache.values()):
                 if entry.get("official_msg_id") == rid:
                     for seg in entry.get("message") or []:
-                        if seg.get("type") == "image":
+                        if seg.get("type") in ("image", "file"):
                             images.append(seg)
                         elif seg.get("type") == "text":
                             t = str((seg.get("data") or {}).get("text") or "").strip()
@@ -684,7 +710,7 @@ class OfficialClient:
     def _enrich_group_event(self, event: dict, data: dict, addressed: bool) -> dict:
         """缓存群消息；@ 机器人时把引用内容 / 刚发的图片接成 reply 段，插件走 get_msg 读取。"""
         meta = event.get("_official") or {}
-        own = [seg for seg in event.get("message") or [] if seg.get("type") in ("text", "image")]
+        own = [seg for seg in event.get("message") or [] if seg.get("type") in ("text", "image", "file")]
         self._cache_message(
             {
                 "message": own,
@@ -757,7 +783,8 @@ class OfficialClient:
                         "group_id": group_id,
                         "message_id": msg_id,
                         "message": [{"type": "text", "data": {"text": content}}]
-                        + self._attachment_images(data),
+                        + self._attachment_images(data)
+                        + self._attachment_files(data),
                         "raw_message": content,
                         "time": timestamp,
                         "sender": {
@@ -791,7 +818,8 @@ class OfficialClient:
                     {"type": "at", "data": {"qq": str(self.self_id)}},
                     {"type": "text", "data": {"text": content}},
                 ]
-                + self._attachment_images(data),
+                + self._attachment_images(data)
+                + self._attachment_files(data),
                 "raw_message": content,
                 "time": timestamp,
                 "sender": {
@@ -814,7 +842,7 @@ class OfficialClient:
                 return None
             user_id = self._ids.get("user", user_openid)
             segments = [{"type": "text", "data": {"text": content}}]
-            segments += self._attachment_images(data)
+            segments += self._attachment_images(data) + self._attachment_files(data)
             self._remember_context("c2c", user_openid, msg_id, C2C_CONTEXT_SECONDS)
             return {
                 "post_type": "message",

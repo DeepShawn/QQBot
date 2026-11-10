@@ -221,7 +221,7 @@ class EventTranslateTests(OfficialBase):
         self.assertEqual(event["message_type"], "private")
         self.assertEqual(event["user_id"], client._ids.get("user", "USER-OPENID-1"))
         self.assertEqual(event["message"][0]["type"], "text")
-        self.assertEqual(len(event["message"]), 2)  # 只有图片被保留
+        self.assertEqual(len(event["message"]), 3)  # 文本 + 图片 + 文件
         image = event["message"][1]
         self.assertEqual(image["type"], "image")
         self.assertEqual(image["data"]["file"], "https://example.com/a.png")

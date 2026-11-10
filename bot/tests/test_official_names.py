@@ -194,10 +194,13 @@ class NamesTranslateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event["message_type"], "group")
         self.assertEqual(event["sender"]["nickname"], "小明")
         self.assertEqual(event["message"][0]["type"], "text")
-        self.assertEqual(len(event["message"]), 2)  # 只有图片
+        self.assertEqual(len(event["message"]), 3)  # 文本 + 图片 + 文件
         image = event["message"][1]
         self.assertEqual(image["type"], "image")
         self.assertEqual(image["data"]["file"], "https://example.com/a.png")
+        doc = event["message"][2]
+        self.assertEqual(doc["type"], "file")
+        self.assertEqual(doc["data"]["url"], "https://example.com/a.pdf")
         self.assertEqual(event["_official"]["kind"], "group")
 
     async def test_group_at_event_attachments_images(self):
