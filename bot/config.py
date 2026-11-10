@@ -168,6 +168,7 @@ DEFAULTS = {
             "triggers": ["画一张", "画个", "画只", "画一幅", "生成图片", "生图", "img:"],
             "push_groups": [],
             "caption": "🎨 画好了",
+        "caption_ai": True,
         },
         "quota_refresh": {
             # 每 301 分钟（5 小时 01 分）给已登录的 Claude/ChatGPT 发「你好」刷新用量窗口

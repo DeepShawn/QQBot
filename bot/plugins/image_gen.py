@@ -15,8 +15,23 @@ import io
 import time
 
 import imagegen
+import providers
 from dispatcher import PluginBase
 from utils import at_seg, mentioned, strip_at, text_of, text_seg
+
+# 角色化画图说明：绝不承认是 AI/机器人，不出现机械词
+CAPTION_AI_SYSTEM = (
+    "你是一个有名字、有性格的角色（像群友一样说话），绝不承认自己是 AI、机器人、模型或程序。"
+    "请用你的角色口吻，针对刚完成的画写 1-2 句中文说明：结合用户需求，"
+    "描述画面主体/光线/氛围，口语化、有细节、可以带一点小得意；"
+    "禁止出现「画好了」「AI」「机器人」「模型」「生成」这些词，只输出这句话。"
+)
+CAPTION_BANNED = ("画好了", "AI", "机器人", "模型", "生成")
+CAPTION_FALLBACKS = (
+    "喏，收好——这幅我盯着调了半天光和颜色，喜欢就夸我两句嘛～",
+    "哼哼，本鱼出手，风都乖乖钻进画里了；你看看还顺眼吗？",
+    "给你，这就是刚刚在我脑子里浮现的画面，氛围感拉满，不许说不好看～",
+)
 
 # 内置触发词兜底：用户常见的「画张/来一张/使用画图功能」等，不依赖配置
 BUILTIN_TRIGGERS = (
@@ -162,6 +177,100 @@ class Plugin(PluginBase):
     # 兼容旧名字
     _resolve_mode = _mode
 
+    @staticmethod
+    def _effective_ai_cfg(ai_cfg: dict) -> dict:
+        """合并 ai_chat 当前 profile（auth/model/provider/base_url...），供说明生成用。"""
+        cfg = dict(ai_cfg) if isinstance(ai_cfg, dict) else {}
+        profiles = [p for p in (cfg.get("profiles") or []) if isinstance(p, dict)]
+        active = str(cfg.get("active_profile") or "")
+        profile = next((p for p in profiles if str(p.get("id")) == active), None)
+        if profile is None and profiles:
+            profile = profiles[0]
+        if profile:
+            for field in ("provider", "base_url", "api_key", "model", "temperature", "max_tokens"):
+                value = profile.get(field)
+                if value not in (None, ""):
+                    cfg[field] = value
+            if "auth" in profile:
+                cfg["auth"] = str(profile.get("auth") or "").strip()
+            if cfg.get("auth"):
+                cfg["model"] = str(profile.get("model") or "").strip()
+        cfg["auth"] = str(cfg.get("auth") or "").strip()
+        return cfg
+
+    @staticmethod
+    def _caption_fallback(prompt: str) -> str:
+        key = str(prompt or "").encode("utf-8") or b"x"
+        return CAPTION_FALLBACKS[sum(key) % len(CAPTION_FALLBACKS)]
+
+    def _roleplay_caption_sync(self, ai_cfg: dict, prompt: str, images: list) -> str:
+        """用当前 AI 配置生成角色口吻的 1-2 句画面说明；失败返回角色化兜底。"""
+        ai_cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
+        auth = str(ai_cfg.get("auth") or "").strip()
+        api_key = str(ai_cfg.get("api_key") or "").strip()
+        if not auth and not api_key:
+            return self._caption_fallback(prompt)
+        provider = str(ai_cfg.get("provider") or "openai")
+        base_url = str(ai_cfg.get("base_url") or "")
+        vision = ai_cfg.get("vision") if isinstance(ai_cfg.get("vision"), dict) else {}
+        model = str(ai_cfg.get("model") or "").strip()
+        if not model and not auth:
+            model = "deepseek-chat"
+        description = ""
+        if images and vision.get("enabled", True) is not False:
+            try:
+                description = providers.describe_images(
+                    provider=provider,
+                    base_url=base_url,
+                    api_key=api_key,
+                    model=str(vision.get("model") or model),
+                    images=list(images[:1]),
+                    prompt="请客观描述这张图的画面主体、颜色、光线和氛围，1-2 句话。",
+                    timeout=float(vision.get("timeout_seconds") or 30),
+                    auth=auth,
+                )
+            except Exception:
+                description = ""
+        user = f"用户想要的画面：{str(prompt or '').strip()}"
+        if description:
+            user += f"\n画面实际内容参考：{str(description).strip()[:500]}"
+        user += "\n请用你的角色口吻写 1-2 句画面说明。"
+        try:
+            reply = providers.chat(
+                provider=provider,
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+                messages=[
+                    {"role": "system", "content": CAPTION_AI_SYSTEM},
+                    {"role": "user", "content": user},
+                ],
+                temperature=0.8,
+                max_tokens=160,
+                timeout=45,
+                auth=auth,
+            )
+        except providers.ProviderError:
+            return self._caption_fallback(prompt)
+        text = str(reply or "").replace("```", "").strip()
+        text = text.strip("\"'“”「」").strip()
+        text = " ".join(text.split())
+        if len(text) < 4:
+            return self._caption_fallback(prompt)
+        lowered = text.lower()
+        if any(word.lower() in lowered for word in CAPTION_BANNED):
+            return self._caption_fallback(prompt)
+        return text[:200]
+
+    async def _roleplay_caption(self, ai_cfg: dict, prompt: str, images: list) -> str:
+        try:
+            return await asyncio.to_thread(
+                self._roleplay_caption_sync, ai_cfg, prompt, images
+            )
+        except Exception as e:
+            self.ctx.log.info("角色化画图说明生成失败，用兜底: %s", e)
+            return self._caption_fallback(prompt)
+
     async def _send_images(self, event, caption: str, segments: list[dict], cfg: dict):
         message = [text_seg(caption)] if caption else []
         message += segments
@@ -192,7 +301,7 @@ class Plugin(PluginBase):
             return False
 
         user_id = event.get("user_id")
-        ai_cfg = self.ctx.plugin_cfg("ai_chat")
+        ai_cfg = self._effective_ai_cfg(self.ctx.plugin_cfg("ai_chat"))
         mode = self._mode(cfg, ai_cfg)
         if mode[0] == "none":
             await self.ctx.reply(event, str(mode[1]))
@@ -234,7 +343,10 @@ class Plugin(PluginBase):
                 pass
 
         segments = [self._to_image_segment(data) for data in images[:2]]
-        caption = str(cfg.get("caption") or "")
+        if cfg.get("caption_ai", True) is not False:
+            caption = await self._roleplay_caption(ai_cfg, prompt, images)
+        else:
+            caption = str(cfg.get("caption") or "")
         if event.get("message_type") == "group" and cfg.get("at_sender", True):
             segments = [at_seg(user_id), text_seg(" ")] + segments
         try:

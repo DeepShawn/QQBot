@@ -177,7 +177,8 @@
         "img:"
       ],
       "push_groups": [],
-      "caption": "🎨 画好了"
+      "caption": "🎨 画好了",
+      "caption_ai": true
     },
     "group_admin": {
       "enabled": true,

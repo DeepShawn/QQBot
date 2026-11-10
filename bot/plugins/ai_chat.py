@@ -209,7 +209,15 @@ IMAGE_PROMPT_REWRITE_SYSTEM = (
     "包含主体、风格、构图、光线、画幅等细节；只输出提示词本身，"
     "不要解释、不要加引号或代码块、不要照抄用户原话。"
 )
-IMAGE_PROMPT_FALLBACK_REPLY = "画好了，图在下面～"
+ROLEPLAY_SYSTEM_RULE = (
+    "你是一个有名字、有性格的角色；绝不承认自己是 AI、机器人、模型或程序，"
+    "被问到时用角色身份打岔；说话像群友，简短有梗。"
+)
+IMAGE_ROLEPLAY_RULE = (
+    "必须用你的角色口吻描述刚出现的画面（1-2 句，有具体细节和氛围）；"
+    "禁止说「画好了」，禁止自称 AI/机器人/模型，不要只回一句空泛的话。"
+)
+IMAGE_PROMPT_FALLBACK_REPLY = "喏，收好——这幅我特意把光和颜色都调过了，喜欢就夸我两句嘛～"
 
 ROUTE_SYSTEM_HEAD = (
     "你是工具路由器。先分析用户需求，再从可用工具里选择 0 或 1 个；"
@@ -1053,6 +1061,7 @@ class Plugin(PluginBase):
                 "count": len(segments),
                 "prompt": prompt,
                 "note": "图片已发送",
+                "reply_style": IMAGE_ROLEPLAY_RULE,
             },
             ensure_ascii=False,
         )
@@ -1234,7 +1243,7 @@ class Plugin(PluginBase):
             return None
         instruction = (
             f"【工具执行结果】generate_image：{output}\n"
-            "图片已发送。请用简短中文告诉用户画好了，并用一两句描述画面；"
+            "图片已发送。" + IMAGE_ROLEPLAY_RULE +
             "不要重复提示词原文，也不要说自己不能画图；"
             "绝对不要用 ASCII/emoji/代码画图，禁止用 SVG 或代码块冒充图片。"
         )
@@ -1379,7 +1388,7 @@ class Plugin(PluginBase):
         if result_label == "generate_image":
             instruction = (
                 f"【工具执行结果】generate_image：{output}\n"
-                "图片已发送。请用简短中文告诉用户画好了，并用一两句描述画面；"
+                "图片已发送。" + IMAGE_ROLEPLAY_RULE +
                 "不要重复提示词原文，也不要说自己不能画图。"
             )
         else:
@@ -1663,6 +1672,8 @@ class Plugin(PluginBase):
             )
         if hints:
             system = (str(system).rstrip() + "\n\n" + "\n\n".join(hints)).strip()
+        if ROLEPLAY_SYSTEM_RULE not in str(system):
+            system = (str(system).rstrip() + "\n\n" + ROLEPLAY_SYSTEM_RULE).strip()
         official_meta = event.get("_official") or {}
         if (
             event.get("message_type") == "group"
