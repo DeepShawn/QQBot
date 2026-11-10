@@ -5,9 +5,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,14 +26,18 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
@@ -88,6 +95,12 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val activePresetId = ai.optStr("active_preset").ifBlank { "custom" }
     val activePreset = if (activePresetId == "custom") null else presets.firstOrNull { it.optStr("id") == activePresetId }
     var presetDetail by remember { mutableStateOf<JSONObject?>(null) }
+    // 当前预设的参考图（切换预设会重新请求）
+    var presetRefBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var presetRefLoading by remember { mutableStateOf(false) }
+    var presetRefError by remember { mutableStateOf("") }
+    // 大图查看器
+    var viewerBytes by remember { mutableStateOf<ByteArray?>(null) }
     var presetMenu by remember { mutableStateOf<JSONObject?>(null) }
     var presetEditing by remember { mutableStateOf<PresetEditing?>(null) }
     var confirmDeletePreset by remember { mutableStateOf<JSONObject?>(null) }
@@ -232,6 +245,10 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                 presetRefTarget = null
                 if (err == null && picked != null) {
                     Store.toast = "已上传「$presetName」的参考图"
+                    if (target.optStr("id") == activePresetId) {
+                        presetRefBytes = picked
+                        presetRefError = ""
+                    }
                 } else {
                     Store.toast = err ?: "上传参考图失败"
                 }
@@ -241,12 +258,26 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
         }
     }
 
-    // 进页面时拉一次账号状态（登录 / 退出后也会刷新），顺便探测有没有参考图（404 = 没有）
+    // 进页面时拉一次账号状态（登录 / 退出后也会刷新），顺便探测有没有全局参考图（404 = 没有）
     LaunchedEffect(Unit) {
         AccountsStore.refresh()
         val ref = AvatarApi.fetch()
         refBytes = ref.bytes
         refError = ref.error
+    }
+
+    // 当前预设的参考图：切换预设时重新请求（避免旧图）
+    LaunchedEffect(activePreset?.optStr("id")) {
+        val id = activePreset?.optStr("id")
+        presetRefBytes = null
+        presetRefError = ""
+        if (id != null) {
+            presetRefLoading = true
+            val ref = AvatarApi.fetch(id)
+            presetRefBytes = ref.bytes
+            presetRefError = ref.error
+            presetRefLoading = false
+        }
     }
 
     /** 改选中那一套 profile 的一个字段，整份 profiles 数组一起提交（后端会保留掩码 key）。 */
@@ -457,7 +488,124 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                     onClick = { presetDetail = preset },
                 )
                 GlassButton(text = "编辑为自定义", onClick = { copyPresetToCustom(preset) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), primary = false)
-                Hint("形象提示词跟随预设；点「编辑为自定义」可复制到自定义后修改。参考图也随预设变化（在预设卡片长按菜单里设置）。")
+                Hint("形象提示词跟随预设；点「编辑为自定义」可复制到自定义后修改。")
+
+                Text(
+                    "当前预设：${preset.optStr("emoji")} ${preset.optStr("name").ifBlank { preset.optStr("id") }}",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = GlassText.primary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                )
+                Text(
+                    "当前预设参考图",
+                    fontSize = 13.sp,
+                    color = GlassText.secondary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                )
+                val presetThumb = remember(presetRefBytes) {
+                    presetRefBytes?.let { decodeThumbnail(it) }
+                }
+                val globalThumb = remember(refBytes) { refBytes?.let { decodeThumbnail(it) } }
+                when {
+                    presetRefLoading -> {
+                        Text(
+                            "正在读取参考图…",
+                            fontSize = 12.sp,
+                            color = GlassText.secondary,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        )
+                    }
+
+                    presetThumb != null -> {
+                        Image(
+                            bitmap = presetThumb,
+                            contentDescription = "当前预设参考图",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                                .height(180.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .border(1.dp, GlassText.divider, RoundedCornerShape(16.dp))
+                                .clickable { viewerBytes = presetRefBytes },
+                        )
+                    }
+
+                    else -> {
+                        Text(
+                            "该预设还没有参考图，会使用全局参考图（点缩略图可放大查看）",
+                            fontSize = 12.sp,
+                            color = GlassText.secondary,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                        )
+                        if (globalThumb != null) {
+                            Text(
+                                "当前使用全局参考图（来源：自定义）",
+                                fontSize = 12.sp,
+                                color = GlassText.tertiary,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                            )
+                            Image(
+                                bitmap = globalThumb,
+                                contentDescription = "全局参考图",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                                    .height(140.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .border(1.dp, GlassText.divider, RoundedCornerShape(16.dp))
+                                    .clickable { viewerBytes = refBytes },
+                            )
+                        }
+                    }
+                }
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    GlassButton(
+                        text = if (presetThumb == null) "为该预设选择参考图" else "更换参考图",
+                        onClick = {
+                            presetRefTarget = preset
+                            presetRefPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                        primary = true,
+                    )
+                    if (presetThumb != null) {
+                        GlassButton(
+                            text = "移除参考图",
+                            onClick = {
+                                scope.launch {
+                                    val id = preset.optStr("id")
+                                    val err = AvatarApi.delete(id)
+                                    if (err == null) {
+                                        presetRefBytes = null
+                                        Store.toast = "已移除该预设的参考图（回退全局）"
+                                    } else {
+                                        presetRefError = err
+                                        Store.toast = err
+                                    }
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            primary = false,
+                        )
+                    }
+                }
+                if (presetRefError.isNotBlank()) {
+                    Text(
+                        presetRefError,
+                        fontSize = 12.sp,
+                        color = Warn,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                    )
+                }
+                Hint("每个预设一张参考图，未设置时回退全局；点缩略图可查看大图。")
             }
 
             if (preset == null) {
@@ -472,7 +620,8 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                         .padding(horizontal = 16.dp)
                         .height(180.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .border(1.dp, GlassText.divider, RoundedCornerShape(16.dp)),
+                        .border(1.dp, GlassText.divider, RoundedCornerShape(16.dp))
+                        .clickable { viewerBytes = refBytes },
                 )
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -603,6 +752,10 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
 
     presetDetail?.let { preset ->
         PresetDetailDialog(preset) { presetDetail = null }
+    }
+
+    viewerBytes?.let { bytes ->
+        GlassImageViewer(bytes) { viewerBytes = null }
     }
 
     presetMenu?.let { p ->
@@ -1051,6 +1204,82 @@ private fun PresetEditorDialog(
                 )
             }
             Spacer(Modifier.height(4.dp))
+        }
+    }
+}
+
+/** 玻璃大图查看器：大图 + 双指缩放/拖动 + 双击放大，点击/关闭按钮退出。 */
+@Composable
+private fun GlassImageViewer(bytes: ByteArray, onClose: () -> Unit) {
+    val bitmap = remember(bytes) { decodeThumbnail(bytes, 1600) }
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+
+    GlassDialog(
+        show = true,
+        title = "参考图",
+        onDismissRequest = onClose,
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .border(1.dp, GlassText.divider, RoundedCornerShape(16.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (bitmap == null) {
+                    Text("图片解码失败", fontSize = 13.sp, color = Warn)
+                } else {
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = "参考图大图",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = offset.x
+                                translationY = offset.y
+                            }
+                            .pointerInput(Unit) {
+                                detectTransformGestures { _, pan, zoom, _ ->
+                                    scale = (scale * zoom).coerceIn(1f, 4f)
+                                    offset = if (scale > 1f) offset + pan else Offset.Zero
+                                }
+                            }
+                            .pointerInput(Unit) {
+                                detectTapGestures(
+                                    onDoubleTap = {
+                                        scale = if (scale > 1f) 1f else 2f
+                                        if (scale == 1f) offset = Offset.Zero
+                                    },
+                                    onTap = { onClose() },
+                                )
+                            },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GlassButton(
+                    text = "重置缩放",
+                    onClick = {
+                        scale = 1f
+                        offset = Offset.Zero
+                    },
+                    modifier = Modifier.weight(1f),
+                    primary = false,
+                )
+                GlassButton(
+                    text = "关闭",
+                    onClick = onClose,
+                    modifier = Modifier.weight(1f),
+                    primary = true,
+                )
+            }
         }
     }
 }
