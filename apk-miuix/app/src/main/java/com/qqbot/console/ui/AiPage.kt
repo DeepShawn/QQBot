@@ -1,6 +1,17 @@
 package com.qqbot.console.ui
 
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -8,16 +19,32 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.qqbot.console.AccountsStore
+import com.qqbot.console.AvatarApi
 import com.qqbot.console.PROVIDER_NAMES
 import com.qqbot.console.PROVIDER_ORDER
 import com.qqbot.console.Store
 import com.qqbot.console.objects
 import com.qqbot.console.patchOf
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.max
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
 
@@ -46,8 +73,53 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     var accountDialog by remember { mutableStateOf<String?>(null) }
     var modelPicker by remember { mutableStateOf(false) }
 
-    // 进页面时拉一次账号状态（登录 / 退出后也会刷新）
-    LaunchedEffect(Unit) { AccountsStore.refresh() }
+    val ctx = LocalContext.current
+    val avatar = ai.optJSONObject("avatar") ?: JSONObject()
+    var refBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var refError by remember { mutableStateOf("") }
+    var refBusy by remember { mutableStateOf(false) }
+
+    val refPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                refBusy = true
+                refError = ""
+                var picked: ByteArray? = null
+                val err = withContext(Dispatchers.IO) {
+                    try {
+                        val bytes = ctx.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                        when {
+                            bytes == null -> "读取图片失败"
+                            bytes.size > 8 * 1024 * 1024 -> "图片太大（超过 8MB），换一张小一点的"
+                            else -> {
+                                picked = bytes
+                                AvatarApi.upload(bytes, "reference.png")
+                            }
+                        }
+                    } catch (e: Exception) {
+                        "读取图片失败：${e.message ?: "未知错误"}"
+                    }
+                }
+                refBusy = false
+                val bytes = picked
+                if (err == null && bytes != null) {
+                    refBytes = bytes
+                    Store.toast = "参考图已保存"
+                } else {
+                    refError = err ?: "上传参考图失败"
+                    Store.toast = refError
+                }
+            }
+        }
+    }
+
+    // 进页面时拉一次账号状态（登录 / 退出后也会刷新），顺便探测有没有参考图（404 = 没有）
+    LaunchedEffect(Unit) {
+        AccountsStore.refresh()
+        val ref = AvatarApi.fetch()
+        refBytes = ref.bytes
+        refError = ref.error
+    }
 
     /** 改选中那一套 profile 的一个字段，整份 profiles 数组一起提交（后端会保留掩码 key）。 */
     fun saveProfileField(field: String, value: Any) {
@@ -164,6 +236,91 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             }
         }
 
+        group("机器人形象") {
+            EditPreference(
+                "形象提示词",
+                avatar.optStr("prompt"),
+                summary = "生成机器人头像 / 立绘时作为外观约束（最多 2000 字）",
+                multiline = true,
+            ) { text ->
+                val trimmed = text.trim()
+                Store.patch(
+                    patchOf("plugins", "ai_chat", "avatar", "prompt", value = trimmed.take(2000)),
+                    "形象提示词已保存",
+                )
+                if (trimmed.length > 2000) Store.toast = "最多 2000 字，已截断保存"
+            }
+            Hint("例：蓝白配色、鲸鱼娘、圆脸、戴耳机。生成机器人形象 / 头像时会作为外观约束。")
+
+            val thumb = remember(refBytes) { refBytes?.let { decodeThumbnail(it) } }
+            if (thumb != null) {
+                Image(
+                    bitmap = thumb,
+                    contentDescription = "参考图",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp)
+                        .height(180.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .border(1.dp, GlassText.divider, RoundedCornerShape(16.dp)),
+                )
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    TextButton(
+                        text = if (refBusy) "处理中…" else "更换参考图",
+                        onClick = {
+                            refPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        text = "移除",
+                        onClick = {
+                            scope.launch {
+                                refBusy = true
+                                refError = ""
+                                val err = AvatarApi.delete()
+                                refBusy = false
+                                if (err == null) {
+                                    refBytes = null
+                                    Store.toast = "参考图已移除"
+                                } else {
+                                    refError = err
+                                    Store.toast = err
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            } else {
+                TextButton(
+                    text = if (refBusy) "处理中…" else "选择参考图",
+                    onClick = {
+                        refPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
+            }
+            if (refError.isNotBlank()) {
+                Text(
+                    refError,
+                    fontSize = 13.sp,
+                    color = Warn,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                )
+            }
+            Hint("参考图只在生成机器人形象 / 头像时作参考，不会公开；生成功能在「画图」工具里生效。")
+        }
+
         group("什么时候回复") {
             ConfigSwitch("私聊直接回复", null, "plugins", "ai_chat", "trigger", "private", default = true)
             ConfigSwitch("群里 @ 才回", null, "plugins", "ai_chat", "trigger", "group_at", default = true)
@@ -269,4 +426,20 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             onDismiss = { modelPicker = false },
         )
     }
+}
+
+/** 解码参考图缩略图（限制到约 720px，避免大图占用内存）。 */
+private fun decodeThumbnail(bytes: ByteArray, maxSide: Int = 720): ImageBitmap? = try {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val w = bounds.outWidth
+    val h = bounds.outHeight
+    var sample = 1
+    if (w > 0 && h > 0) {
+        while (max(w, h) / sample > maxSide * 2) sample *= 2
+    }
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
+} catch (_: Throwable) {
+    null
 }

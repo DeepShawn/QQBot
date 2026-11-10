@@ -18,6 +18,8 @@ import re
 import time
 import urllib.error
 import urllib.request
+import uuid
+from pathlib import Path
 
 import files as files_mod
 import imagegen
@@ -161,6 +163,41 @@ IMAGE_INTENT_RE = re.compile(
 )
 # 用户只说「继续/再来」时，结合最近历史判断是不是接着画图
 CONTEXT_IMAGE_RE = re.compile(r"(继续|再来|再画|接着画|再生成|再来一张)")
+
+# 机器人形象类请求：只有这类才拼 avatar.prompt / 使用参考图
+AVATAR_REQUEST_RE = re.compile(
+    r"(机器人(的)?(形象|头像|立绘)|你的(形象|头像|立绘)|"
+    r"画(个|一个|一张)?你(自己|的形象|的头像)?|自画像|"
+    r"头像|立绘|(bot|机器人)\s*(形象|头像|立绘)|avatar)",
+    re.I,
+)
+AVATAR_BASE_DIR = Path(__file__).resolve().parents[2]
+
+
+def _multipart_body(fields: dict, files: list) -> tuple[bytes, str]:
+    """构造 multipart/form-data；files=[(name, filename, content_type, bytes)]。"""
+    boundary = "----qqbot" + uuid.uuid4().hex
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.append(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                f"{value}\r\n"
+            ).encode("utf-8")
+        )
+    for name, filename, content_type, content in files:
+        chunks.append(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                f"Content-Type: {content_type}\r\n\r\n"
+            ).encode("utf-8")
+        )
+        chunks.append(bytes(content))
+        chunks.append(b"\r\n")
+    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(chunks), boundary
 IMAGE_PROMPT_FROM_HISTORY_SYSTEM = (
     "你是生图提示词作者。请结合对话上下文，把用户这次的画图需求写成一句具体的中文生图提示词，"
     "包含主体、风格、构图、光线、画幅等细节；只输出提示词本身，"
@@ -842,7 +879,94 @@ class Plugin(PluginBase):
             "data": {"file": "base64://" + base64.b64encode(payload).decode("ascii")},
         }
 
-    async def _execute_image_tool(self, event, cfg: dict, call: dict) -> str:
+    @staticmethod
+    def _looks_like_avatar_request(text) -> bool:
+        raw = str(text or "").strip()
+        return bool(raw) and bool(AVATAR_REQUEST_RE.search(raw))
+
+    @staticmethod
+    def _avatar_cfg(cfg: dict) -> dict:
+        value = cfg.get("avatar") if isinstance(cfg, dict) else None
+        return value if isinstance(value, dict) else {}
+
+    def _avatar_reference_path(self, cfg: dict) -> Path | None:
+        """avatar.reference_image 指向的本地参考图（不存在返回 None）。"""
+        reference = str(self._avatar_cfg(cfg).get("reference_image") or "").strip()
+        if not reference:
+            return None
+        path = Path(reference)
+        if not path.is_absolute():
+            path = AVATAR_BASE_DIR / reference
+        try:
+            return path if path.is_file() else None
+        except OSError:
+            return None
+
+    def _generate_avatar_reference_sync(
+        self,
+        ai_cfg: dict,
+        image_cfg: dict,
+        prompt: str,
+        reference_path: Path,
+        size: str,
+        timeout: float,
+    ) -> list[bytes]:
+        """OpenAI 兼容 /images/edits（multipart）按参考图生成；失败抛异常由上层回退。"""
+        decision = imagegen.resolve_image_mode(ai_cfg, image_cfg)
+        if decision.get("mode") != "api":
+            raise RuntimeError("当前画图方式（账号额度）不支持参考图")
+        provider = str(decision.get("provider") or "openai").strip().lower()
+        if provider != "openai":
+            raise RuntimeError("当前画图 provider 不支持参考图")
+        api_key = str(decision.get("api_key") or "")
+        model = str(decision.get("model") or imagegen.DEFAULT_IMAGE_MODEL)
+        base = str(decision.get("base_url") or imagegen.DEFAULT_IMAGE_BASE_URL)
+        endpoint = imagegen._openai_endpoint(base).rsplit("/", 1)[0] + "/edits"
+        raw = reference_path.read_bytes()
+        body, boundary = _multipart_body(
+            {"model": model, "prompt": prompt, "size": size},
+            [("image", reference_path.name or "reference.png", "image/png", raw)],
+        )
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Accept": "application/json",
+            "User-Agent": "qqbot-avatar/1.0",
+        }
+        request = urllib.request.Request(endpoint, data=body, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=float(timeout)) as response:
+                payload = json.loads(response.read().decode("utf-8", "replace"))
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"参考图接口返回 HTTP {e.code}") from None
+        except Exception:
+            raise RuntimeError("参考图接口网络错误") from None
+        items = payload.get("data") if isinstance(payload, dict) else None
+        images: list[bytes] = []
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            encoded = item.get("b64_json") or item.get("b64")
+            if isinstance(encoded, str) and encoded.strip():
+                try:
+                    images.append(base64.b64decode(encoded.split(",", 1)[-1]))
+                except Exception:
+                    continue
+                continue
+            link = item.get("url")
+            if isinstance(link, str) and link.startswith(("http://", "https://")):
+                try:
+                    with urllib.request.urlopen(link, timeout=float(timeout)) as r:
+                        images.append(r.read())
+                except Exception:
+                    continue
+        if not images:
+            raise RuntimeError("参考图接口没有返回图片")
+        return images[:2]
+
+    async def _execute_image_tool(
+        self, event, cfg: dict, call: dict, user_text: str = ""
+    ) -> str:
         """执行一次 generate_image 调用（原生 tools 路径）。"""
         try:
             arguments = json.loads(str(call.get("arguments") or "{}"))
@@ -850,10 +974,10 @@ class Plugin(PluginBase):
             return json.dumps({"error": "工具参数不是合法 JSON"}, ensure_ascii=False)
         if not isinstance(arguments, dict):
             return json.dumps({"error": "工具参数格式不对"}, ensure_ascii=False)
-        return await self._perform_image_tool(event, cfg, arguments)
+        return await self._perform_image_tool(event, cfg, arguments, user_text)
 
     async def _perform_image_tool(
-        self, event, cfg: dict, arguments: dict
+        self, event, cfg: dict, arguments: dict, user_text: str = ""
     ) -> str:
         """按参数生成图片 -> 直接发到当前会话 -> 返回 JSON 文本。"""
         prompt = str(arguments.get("prompt") or "").strip()
@@ -869,16 +993,46 @@ class Plugin(PluginBase):
             timeout = float(image_cfg.get("timeout_seconds") or 120)
         except (TypeError, ValueError):
             timeout = 120.0
-        try:
-            images = await asyncio.to_thread(
-                imagegen.generate_for_ai, cfg, image_cfg, prompt, size, timeout
-            )
-        except imagegen.ImageGenError as e:
-            self.ctx.log.warning("generate_image 工具失败: %s", e)
-            return json.dumps({"error": str(e)}, ensure_ascii=False)
-        except Exception as e:
-            self.ctx.log.warning("generate_image 工具异常: %s", e)
-            return json.dumps({"error": "画图失败，稍后再试"}, ensure_ascii=False)
+
+        # 机器人形象：只有形象/头像/立绘类请求才拼形象提示词、用参考图
+        avatar = self._avatar_cfg(cfg)
+        avatar_prompt = str(avatar.get("prompt") or "").strip()
+        avatar_request = self._looks_like_avatar_request(
+            user_text
+        ) or self._looks_like_avatar_request(prompt)
+        if avatar_prompt and avatar_request and avatar_prompt not in prompt:
+            prompt = f"{avatar_prompt}，{prompt}" if prompt else avatar_prompt
+        reference_path = (
+            self._avatar_reference_path(cfg) if avatar_request else None
+        )
+        images = None
+        if reference_path is not None:
+            try:
+                images = await asyncio.to_thread(
+                    self._generate_avatar_reference_sync,
+                    cfg,
+                    image_cfg,
+                    prompt,
+                    reference_path,
+                    size,
+                    timeout,
+                )
+                if images:
+                    self.ctx.log.info("机器人形象：使用参考图生成 %d 张", len(images))
+            except Exception as e:
+                self.ctx.log.warning("参考图生图失败，回退纯文生图: %s", e)
+                images = None
+        if not images:
+            try:
+                images = await asyncio.to_thread(
+                    imagegen.generate_for_ai, cfg, image_cfg, prompt, size, timeout
+                )
+            except imagegen.ImageGenError as e:
+                self.ctx.log.warning("generate_image 工具失败: %s", e)
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
+            except Exception as e:
+                self.ctx.log.warning("generate_image 工具异常: %s", e)
+                return json.dumps({"error": "画图失败，稍后再试"}, ensure_ascii=False)
         if not images:
             return json.dumps({"error": "画图接口没有返回图片"}, ensure_ascii=False)
         segments = [self._image_segment(data) for data in images[:2]]
@@ -1069,7 +1223,7 @@ class Plugin(PluginBase):
         if size not in IMAGE_SIZES:
             size = "1024x1024"
         output = await self._perform_image_tool(
-            event, cfg, {"prompt": image_prompt, "size": size}
+            event, cfg, {"prompt": image_prompt, "size": size}, user_text=prompt
         )
         try:
             parsed = json.loads(output)
@@ -1187,7 +1341,9 @@ class Plugin(PluginBase):
                 )
             arguments["prompt"] = image_prompt
             self.ctx.log.info("工具路由命中 generate_image")
-            output = await self._perform_image_tool(event, cfg, arguments)
+            output = await self._perform_image_tool(
+                event, cfg, arguments, user_text=prompt
+            )
             result_label = "generate_image"
         elif tool == "run_python" and python_ok:
             arguments = {k: v for k, v in decision.items() if k != "tool"}
@@ -1253,6 +1409,11 @@ class Plugin(PluginBase):
     async def _tool_chat(self, event, cfg: dict, messages: list, tools: list) -> str:
         """最多 3 轮工具循环：tool_calls -> 执行 -> role=tool 结果回给模型。"""
         working = [dict(item) for item in messages]
+        user_text = ""
+        for item in reversed(messages):
+            if isinstance(item, dict) and item.get("role") == "user":
+                user_text = str(item.get("content") or "")
+                break
         last_content = ""
         had_image_result = False
         for round_index in range(MAX_TOOL_ROUNDS):
@@ -1291,7 +1452,9 @@ class Plugin(PluginBase):
                 call_id = assistant_calls[index]["id"]
                 name = str(call.get("name") or "").strip()
                 if name == IMAGE_TOOL_NAME:
-                    output = await self._execute_image_tool(event, cfg, call)
+                    output = await self._execute_image_tool(
+                        event, cfg, call, user_text
+                    )
                     try:
                         parsed = json.loads(output)
                     except Exception:

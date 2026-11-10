@@ -95,6 +95,10 @@
       "max_tokens": 1600,
       "timeout_seconds": 60,
       "system_prompt": "你是 QQ 群里的机器人 {bot_name}，说话简短、口语化，像群友一样。回答控制在 120 字以内，不要用 Markdown 标题，不要暴露自己是 AI 模型。",
+      "avatar": {
+        "prompt": "",
+        "reference_image": ""
+      },
       "trigger": {
         "private": true,
         "group_at": true,

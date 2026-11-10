@@ -91,6 +91,11 @@ DEFAULTS = {
                 "你是 QQ 群里的机器人 {bot_name}，说话简短、口语化，像群友一样。"
                 "回答控制在 120 字以内，不要用 Markdown 标题，不要暴露自己是 AI 模型。"
             ),
+            # 机器人形象：生成机器人头像/立绘时的外观约束 + 参考图
+            "avatar": {
+                "prompt": "",
+                "reference_image": "",
+            },
             "trigger": {
                 "private": True,
                 "group_at": True,

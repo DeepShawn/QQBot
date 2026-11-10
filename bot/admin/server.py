@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import base64
+import io
 import json
 import os
 import re
@@ -331,6 +333,15 @@ def sanitize_config(cfg: dict) -> dict:
         _clamp_int(prof, "max_tokens", 64, 8192, 4096)
         if not str(prof.get("id") or "").strip():
             prof["id"] = "profile"
+    avatar = ai.get("avatar")
+    if not isinstance(avatar, dict):
+        avatar = {}
+    avatar["prompt"] = str(avatar.get("prompt") or "")[:2000]
+    reference = str(avatar.get("reference_image") or "").strip().replace("\\", "/")
+    if reference and not reference.startswith("data/avatar/"):
+        reference = ""
+    avatar["reference_image"] = reference
+    ai["avatar"] = avatar
     ig = plugins.setdefault("image_gen", {})
     _clamp_int(ig, "timeout_seconds", 10, 300, 120)
     return cfg
@@ -485,6 +496,174 @@ def api_file_get(name: str) -> dict:
         "binary": binary,
         "text": text,
     }
+
+
+# ---------------------------------------------------------------- 机器人形象参考图
+AVATAR_MAX_BYTES = 8 << 20          # 8MB
+AVATAR_MAX_SIDE = 1536
+AVATAR_REL_PATH = "data/avatar/reference.png"
+AVATAR_MIME = {"image/png", "image/jpeg", "image/webp"}
+
+
+def avatar_dir() -> Path:
+    return Path(DATA_DIR) / "avatar"
+
+
+def avatar_reference_path() -> Path:
+    return avatar_dir() / "reference.png"
+
+
+def _detect_image_mime(raw: bytes) -> str:
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+def _png_size(raw: bytes) -> tuple[int, int]:
+    """不依赖 PIL 读 PNG/JPEG 尺寸；失败返回 (0,0)。"""
+    try:
+        if raw.startswith(b"\x89PNG\r\n\x1a\n") and len(raw) >= 24:
+            return (
+                int.from_bytes(raw[16:20], "big"),
+                int.from_bytes(raw[20:24], "big"),
+            )
+        if raw.startswith(b"\xff\xd8"):
+            i = 2
+            while i + 9 < len(raw):
+                if raw[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = raw[i + 1]
+                if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    height = int.from_bytes(raw[i + 5:i + 7], "big")
+                    width = int.from_bytes(raw[i + 7:i + 9], "big")
+                    return width, height
+                if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+                    i += 2
+                    continue
+                length = int.from_bytes(raw[i + 2:i + 4], "big")
+                i += 2 + max(2, length)
+    except Exception:
+        pass
+    return 0, 0
+
+
+def _avatar_decode_body(body: dict) -> tuple[bytes, str]:
+    if not isinstance(body, dict):
+        raise ValueError("请求格式不正确")
+    data_b64 = str(body.get("data_base64") or "").strip()
+    data_url = str(body.get("data_url") or "").strip()
+    mime = ""
+    if not data_b64 and data_url:
+        if not data_url.startswith("data:"):
+            raise ValueError("data_url 格式不正确")
+        header, _, payload = data_url.partition(",")
+        mime = header[5:].split(";")[0].strip().lower()
+        data_b64 = payload.strip()
+    if not data_b64:
+        raise ValueError("缺少图片数据（data_base64/data_url）")
+    if len(data_b64) > (AVATAR_MAX_BYTES * 4 // 3) + 4096:
+        raise ValueError("图片太大（最大 8MB）")
+    try:
+        raw = base64.b64decode(data_b64, validate=False)
+    except Exception:
+        raise ValueError("图片 base64 解析失败") from None
+    if not raw:
+        raise ValueError("图片数据为空")
+    if len(raw) > AVATAR_MAX_BYTES:
+        raise ValueError("图片太大（最大 8MB）")
+    detected = _detect_image_mime(raw)
+    mime = mime or detected
+    if detected:
+        mime = detected
+    if mime not in AVATAR_MIME:
+        raise ValueError("只支持 png/jpeg/webp 图片")
+    return raw, mime
+
+
+def _avatar_to_png(raw: bytes) -> tuple[bytes, int, int]:
+    """统一转 PNG（最长边 <=1536）；PIL 不可用时原样保存。"""
+    try:
+        from PIL import Image
+
+        image = Image.open(io.BytesIO(raw))
+        image.load()
+        if max(image.size) > AVATAR_MAX_SIDE:
+            image.thumbnail((AVATAR_MAX_SIDE, AVATAR_MAX_SIDE))
+        if image.mode not in ("RGB", "RGBA"):
+            image = image.convert("RGBA")
+        out = io.BytesIO()
+        image.save(out, format="PNG", optimize=True)
+        width, height = image.size
+        return out.getvalue(), int(width), int(height)
+    except ImportError:
+        width, height = _png_size(raw)
+        return raw, width, height
+    except Exception:
+        width, height = _png_size(raw)
+        return raw, width, height
+
+
+def _set_avatar_reference(value: str) -> None:
+    cfg = load_config()
+    plugins = cfg.setdefault("plugins", {})
+    ai = plugins.setdefault("ai_chat", {})
+    avatar = ai.get("avatar")
+    if not isinstance(avatar, dict):
+        avatar = {}
+    avatar["reference_image"] = str(value or "")
+    ai["avatar"] = avatar
+    write_json(CONFIG_PATH, cfg)
+
+
+def api_avatar_reference_get():
+    """返回参考图 PNG 字节；没有则 None。"""
+    path = avatar_reference_path()
+    try:
+        if path.is_file():
+            return path.read_bytes()
+    except Exception:
+        return None
+    return None
+
+
+def api_avatar_reference_post(body: dict) -> dict:
+    raw, mime = _avatar_decode_body(body)
+    png, width, height = _avatar_to_png(raw)
+    path = avatar_reference_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".png.tmp")
+    try:
+        tmp.write_bytes(png)
+        tmp.replace(path)
+    except Exception:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    _set_avatar_reference(AVATAR_REL_PATH)
+    return {
+        "ok": True,
+        "path": AVATAR_REL_PATH,
+        "width": width,
+        "height": height,
+        "bytes": len(png),
+    }
+
+
+def api_avatar_reference_delete() -> dict:
+    path = avatar_reference_path()
+    try:
+        path.unlink(missing_ok=True)
+    except Exception as e:
+        return {"ok": False, "error": f"删除参考图失败: {e}"}
+    _set_avatar_reference("")
+    return {"ok": True}
 
 
 def api_patch_config(patch: dict) -> dict:
@@ -2050,6 +2229,11 @@ class Handler(BaseHTTPRequestHandler):
                 skill_name = (qs.get("name") or [""])[0]
                 return self._json(_api_safe(lambda: api_skills_get(skill_name),
                                             "读取技能失败，请稍后再试"))
+            if path == "/api/avatar/reference":
+                data = api_avatar_reference_get()
+                if data is None:
+                    return self._error("还没有设置参考图", 404)
+                return self._send(200, data, "image/png")
             if path == "/api/state":
                 return self._json(build_state())
             if path == "/api/context":
@@ -2093,6 +2277,15 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._error(f"内部错误: {e}", 500)
 
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        try:
+            if path == "/api/avatar/reference":
+                return self._json(api_avatar_reference_delete())
+            return self._error("not found", 404)
+        except Exception as e:
+            return self._error(f"内部错误: {e}", 500)
+
     def do_POST(self):
         path = urlparse(self.path).path
         try:
@@ -2100,6 +2293,13 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/config":
                 cfg = api_patch_config(body)
                 return self._json({"ok": True, "config": cfg})
+            if path == "/api/avatar/reference":
+                try:
+                    return self._json(api_avatar_reference_post(body))
+                except ValueError as e:
+                    return self._error(str(e), 400)
+                except Exception:
+                    return self._error("上传参考图失败，请稍后再试", 500)
             if path == "/api/logs/clean":
                 return self._json({"ok": True, **cleanup_logs_once()})
             if path == "/api/context/clear":
