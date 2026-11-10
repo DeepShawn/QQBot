@@ -55,6 +55,7 @@ import kotlin.math.max
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.ScrollBehavior
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.OverlayDropdownPreference
@@ -90,6 +91,68 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
     val activePresetId = ai.optStr("active_preset").ifBlank { "custom" }
     val activePreset = if (activePresetId == "custom") null else presets.firstOrNull { it.optStr("id") == activePresetId }
     var presetDetail by remember { mutableStateOf<JSONObject?>(null) }
+    var presetMenu by remember { mutableStateOf<JSONObject?>(null) }
+    var presetEditing by remember { mutableStateOf<PresetEditing?>(null) }
+    var confirmDeletePreset by remember { mutableStateOf<JSONObject?>(null) }
+
+    /** 写 presets 整数组（保持现有预设），new = true 时追加；编辑时按 id 替换、不改 id。 */
+    fun patchPresets(list: List<JSONObject>, extra: JSONObject = JSONObject(), okText: String? = null) {
+        val arr = JSONArray()
+        list.forEach { arr.put(JSONObject(it.toString())) }
+        val values = JSONObject(extra.toString()).put("presets", arr)
+        scope.launch {
+            Store.patch(patchOf("plugins", "ai_chat", value = values), okText)
+        }
+    }
+
+    fun savePreset(original: JSONObject?, fields: JSONObject) {
+        val list = presets.map { JSONObject(it.toString()) }.toMutableList()
+        if (original == null) {
+            val id = "user-" + System.currentTimeMillis().toString().takeLast(10)
+            val obj = JSONObject(fields.toString()).put("id", id)
+            list.add(obj)
+            patchPresets(
+                list,
+                extra = JSONObject().put("active_preset", id),
+                okText = "已保存预设「${obj.optStr("name")}」，并切换到它",
+            )
+        } else {
+            val id = original.optStr("id")
+            val idx = list.indexOfFirst { it.optStr("id") == id }
+            if (idx >= 0) {
+                list[idx] = JSONObject(original.toString()).apply {
+                    put("name", fields.optStr("name"))
+                    put("emoji", fields.optStr("emoji"))
+                    put("system_prompt", fields.optStr("system_prompt"))
+                    put("avatar_prompt", fields.optStr("avatar_prompt"))
+                }
+            }
+            patchPresets(list, okText = "预设已更新")
+        }
+    }
+
+    fun deletePreset(preset: JSONObject) {
+        val id = preset.optStr("id")
+        val list = presets.filter { it.optStr("id") != id }.map { JSONObject(it.toString()) }
+        val extra = JSONObject()
+        if (activePresetId == id) extra.put("active_preset", "custom")
+        patchPresets(
+            list,
+            extra = extra,
+            okText = if (activePresetId == id) "预设已删除，已切回「自定义」人格" else "预设已删除",
+        )
+    }
+
+    /** 复制任意预设为「我的预设」（内置预设也可用：复制出一份 user-xxx 再编辑）。 */
+    fun duplicatePreset(preset: JSONObject) {
+        val list = presets.map { JSONObject(it.toString()) }.toMutableList()
+        val id = "user-" + System.currentTimeMillis().toString().takeLast(10)
+        val copy = JSONObject(preset.toString())
+            .put("id", id)
+            .put("name", (preset.optStr("name") + " 副本").take(40))
+        list.add(copy)
+        patchPresets(list, okText = "已复制为我的预设，可长按编辑")
+    }
 
     fun switchPreset(id: String, name: String) {
         scope.launch {
@@ -323,11 +386,21 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
                         desc = p.optStr("system_prompt").replace("\n", " ").take(30),
                         selected = id == activePresetId,
                         onClick = { switchPreset(id, pName) },
-                        onLongPress = { presetDetail = p },
+                        onLongPress = { presetMenu = p },
+                    )
+                }
+                item(key = "new-preset") {
+                    PresetCard(
+                        emoji = "➕",
+                        name = "新建预设",
+                        desc = "自己写一套人格并保存",
+                        selected = false,
+                        onClick = { presetEditing = PresetEditing(null, true) },
+                        onLongPress = { presetEditing = PresetEditing(null, true) },
                     )
                 }
             }
-            Hint("点击卡片立即切换人格；长按查看该预设的完整人格 / 形象提示词。")
+            Hint("点击卡片立即切换人格；长按预设卡片可查看详情 / 编辑 / 删除 / 复制为自定义。")
         }
 
         group("机器人形象") {
@@ -516,6 +589,60 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
         PresetDetailDialog(preset) { presetDetail = null }
     }
 
+    presetMenu?.let { p ->
+        val presetId = p.optStr("id")
+        PresetMenuDialog(
+            preset = p,
+            isUser = presetId.startsWith("user-"),
+            onView = {
+                presetMenu = null
+                presetDetail = p
+            },
+            onEdit = {
+                presetMenu = null
+                presetEditing = PresetEditing(p, false)
+            },
+            onDelete = {
+                presetMenu = null
+                confirmDeletePreset = p
+            },
+            onDuplicate = {
+                presetMenu = null
+                duplicatePreset(p)
+            },
+            onCopyCustom = {
+                presetMenu = null
+                copyPresetToCustom(p)
+            },
+            onDismiss = { presetMenu = null },
+        )
+    }
+
+    presetEditing?.let { editing ->
+        PresetEditorDialog(
+            initial = editing.original,
+            onSave = { fields ->
+                savePreset(if (editing.isNew) null else editing.original, fields)
+                presetEditing = null
+            },
+            onDismiss = { presetEditing = null },
+        )
+    }
+
+    confirmDeletePreset?.let { p ->
+        ConfirmDialog(
+            show = true,
+            title = "删除预设「${p.optStr("name")}」？",
+            summary = "删除后不能恢复；如果当前正在使用这个预设，会切回「自定义」人格。",
+            okText = "删除",
+            onDismiss = { confirmDeletePreset = null },
+            onOk = {
+                deletePreset(p)
+                confirmDeletePreset = null
+            },
+        )
+    }
+
     accountDialog?.let { id ->
         AccountDialog(
             providerId = id,
@@ -631,6 +758,164 @@ private fun PresetDetailDialog(preset: JSONObject, onClose: () -> Unit) {
             )
             Spacer(Modifier.height(16.dp))
             GlassButton(text = "关闭", onClick = onClose, modifier = Modifier.fillMaxWidth())
+        }
+    }
+}
+
+/** 预设编辑状态：original = null 表示新建。 */
+private class PresetEditing(val original: JSONObject?, val isNew: Boolean)
+
+/** 长按预设卡片后的操作菜单。 */
+@Composable
+private fun PresetMenuDialog(
+    preset: JSONObject,
+    isUser: Boolean,
+    onView: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onDuplicate: () -> Unit,
+    onCopyCustom: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val name = preset.optStr("name").ifBlank { preset.optStr("id") }
+    val emoji = preset.optStr("emoji").ifBlank { "🤖" }
+    GlassDialog(show = true, title = "$emoji $name", onDismissRequest = onDismiss) {
+        Column(Modifier.fillMaxWidth()) {
+            TextButton(text = "查看详情", onClick = onView, modifier = Modifier.fillMaxWidth())
+            if (isUser) {
+                TextButton(text = "编辑", onClick = onEdit, modifier = Modifier.fillMaxWidth())
+            }
+            TextButton(text = "复制为我的预设", onClick = onDuplicate, modifier = Modifier.fillMaxWidth())
+            TextButton(text = "复制为自定义人格", onClick = onCopyCustom, modifier = Modifier.fillMaxWidth())
+            if (isUser) {
+                TextButton(
+                    text = "删除预设",
+                    onClick = onDelete,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.textButtonColors(textColor = Bad),
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            GlassButton(
+                text = "关闭",
+                onClick = onDismiss,
+                modifier = Modifier.fillMaxWidth(),
+                primary = false,
+            )
+        }
+    }
+}
+
+/** 新建 / 编辑人格预设弹窗（玻璃风格、可滚动、带字数校验）。 */
+@Composable
+private fun PresetEditorDialog(
+    initial: JSONObject?,
+    onSave: (JSONObject) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initial?.optStr("name").orEmpty()) }
+    var emoji by remember { mutableStateOf(initial?.optStr("emoji").orEmpty()) }
+    var system by remember { mutableStateOf(initial?.optStr("system_prompt").orEmpty()) }
+    var avatar by remember { mutableStateOf(initial?.optStr("avatar_prompt").orEmpty()) }
+    var error by remember { mutableStateOf("") }
+
+    fun counter(current: Int, max: Int): String = "$current/$max"
+
+    GlassDialog(
+        show = true,
+        title = if (initial == null) "新建人格预设" else "编辑人格预设",
+        onDismissRequest = onDismiss,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().heightIn(max = 580.dp).verticalScroll(rememberScrollState()),
+        ) {
+            TextField(
+                value = name,
+                onValueChange = { name = it.take(40) },
+                label = "名称（必填，≤40 字）",
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                counter(name.length, 40),
+                fontSize = 12.sp,
+                color = GlassText.tertiary,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 10.dp),
+            )
+            TextField(
+                value = emoji,
+                onValueChange = { emoji = it.take(8) },
+                label = "emoji（可选，≤8 字符）",
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(10.dp))
+            TextField(
+                value = system,
+                onValueChange = { system = it.take(4000) },
+                label = "人格提示词（必填，≤4000 字）",
+                singleLine = false,
+                minLines = 4,
+                maxLines = 10,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                counter(system.length, 4000),
+                fontSize = 12.sp,
+                color = GlassText.tertiary,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 10.dp),
+            )
+            TextField(
+                value = avatar,
+                onValueChange = { avatar = it.take(2000) },
+                label = "形象提示词（可选，≤2000 字）",
+                singleLine = false,
+                minLines = 2,
+                maxLines = 6,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                counter(avatar.length, 2000),
+                fontSize = 12.sp,
+                color = GlassText.tertiary,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp, bottom = 10.dp),
+            )
+            if (error.isNotBlank()) {
+                Text(error, fontSize = 13.sp, color = Bad)
+                Spacer(Modifier.height(8.dp))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GlassButton(
+                    text = "取消",
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                    primary = false,
+                )
+                GlassButton(
+                    text = "保存",
+                    onClick = {
+                        val trimmedName = name.trim()
+                        val trimmedSystem = system.trim()
+                        when {
+                            trimmedName.isEmpty() -> error = "名称不能为空"
+                            trimmedSystem.isEmpty() -> error = "人格提示词不能为空"
+                            else -> {
+                                error = ""
+                                onSave(
+                                    JSONObject()
+                                        .put("name", trimmedName)
+                                        .put("emoji", emoji.trim())
+                                        .put("system_prompt", trimmedSystem)
+                                        .put("avatar_prompt", avatar.trim()),
+                                )
+                            }
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                    primary = true,
+                )
+            }
+            Spacer(Modifier.height(4.dp))
         }
     }
 }
