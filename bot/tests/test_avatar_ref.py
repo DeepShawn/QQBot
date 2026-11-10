@@ -397,7 +397,7 @@ class AvatarIntentTests(unittest.IsolatedAsyncioTestCase):
             captured.append(request)
             return FakeResponse()
 
-        _patch(self, ai_chat.urllib.request, "urlopen", fake_urlopen)
+        _patch(self, imagegen.urllib.request, "urlopen", fake_urlopen)
         images = self.plugin._generate_avatar_reference_sync(
             self.ai_cfg,
             self.image_cfg,
@@ -428,6 +428,7 @@ class AvatarIntentTests(unittest.IsolatedAsyncioTestCase):
             "你的头像",
             "画个头像",
             "画你自己",
+            "画张你自己的照片",
             "机器人立绘",
             "自画像",
             "avatar",

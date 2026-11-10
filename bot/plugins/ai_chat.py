@@ -16,9 +16,6 @@ import io
 import json
 import re
 import time
-import urllib.error
-import urllib.request
-import uuid
 from pathlib import Path
 
 import files as files_mod
@@ -164,40 +161,10 @@ IMAGE_INTENT_RE = re.compile(
 # 用户只说「继续/再来」时，结合最近历史判断是不是接着画图
 CONTEXT_IMAGE_RE = re.compile(r"(继续|再来|再画|接着画|再生成|再来一张)")
 
-# 机器人形象类请求：只有这类才拼 avatar.prompt / 使用参考图
-AVATAR_REQUEST_RE = re.compile(
-    r"(机器人(的)?(形象|头像|立绘)|你的(形象|头像|立绘)|"
-    r"画(个|一个|一张)?你(自己|的形象|的头像)?|自画像|"
-    r"头像|立绘|(bot|机器人)\s*(形象|头像|立绘)|avatar)",
-    re.I,
-)
+# 机器人形象类请求识别与参考图实现放到 imagegen，和 image_gen 插件共用
 AVATAR_BASE_DIR = Path(__file__).resolve().parents[2]
-
-
-def _multipart_body(fields: dict, files: list) -> tuple[bytes, str]:
-    """构造 multipart/form-data；files=[(name, filename, content_type, bytes)]。"""
-    boundary = "----qqbot" + uuid.uuid4().hex
-    chunks: list[bytes] = []
-    for name, value in fields.items():
-        chunks.append(
-            (
-                f"--{boundary}\r\n"
-                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
-                f"{value}\r\n"
-            ).encode("utf-8")
-        )
-    for name, filename, content_type, content in files:
-        chunks.append(
-            (
-                f"--{boundary}\r\n"
-                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
-                f"Content-Type: {content_type}\r\n\r\n"
-            ).encode("utf-8")
-        )
-        chunks.append(bytes(content))
-        chunks.append(b"\r\n")
-    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
-    return b"".join(chunks), boundary
+AVATAR_REQUEST_RE = imagegen.AVATAR_REQUEST_RE
+_multipart_body = imagegen._multipart_body  # 兼容旧引用
 IMAGE_PROMPT_FROM_HISTORY_SYSTEM = (
     "你是生图提示词作者。请结合对话上下文，把用户这次的画图需求写成一句具体的中文生图提示词，"
     "包含主体、风格、构图、光线、画幅等细节；只输出提示词本身，"
@@ -889,8 +856,7 @@ class Plugin(PluginBase):
 
     @staticmethod
     def _looks_like_avatar_request(text) -> bool:
-        raw = str(text or "").strip()
-        return bool(raw) and bool(AVATAR_REQUEST_RE.search(raw))
+        return imagegen.looks_like_avatar_request(text)
 
     @staticmethod
     def _avatar_cfg(cfg: dict) -> dict:
@@ -899,16 +865,7 @@ class Plugin(PluginBase):
 
     def _avatar_reference_path(self, cfg: dict) -> Path | None:
         """avatar.reference_image 指向的本地参考图（不存在返回 None）。"""
-        reference = str(self._avatar_cfg(cfg).get("reference_image") or "").strip()
-        if not reference:
-            return None
-        path = Path(reference)
-        if not path.is_absolute():
-            path = AVATAR_BASE_DIR / reference
-        try:
-            return path if path.is_file() else None
-        except OSError:
-            return None
+        return imagegen.avatar_reference_path(cfg, AVATAR_BASE_DIR)
 
     def _generate_avatar_reference_sync(
         self,
@@ -920,57 +877,9 @@ class Plugin(PluginBase):
         timeout: float,
     ) -> list[bytes]:
         """OpenAI 兼容 /images/edits（multipart）按参考图生成；失败抛异常由上层回退。"""
-        decision = imagegen.resolve_image_mode(ai_cfg, image_cfg)
-        if decision.get("mode") != "api":
-            raise RuntimeError("当前画图方式（账号额度）不支持参考图")
-        provider = str(decision.get("provider") or "openai").strip().lower()
-        if provider != "openai":
-            raise RuntimeError("当前画图 provider 不支持参考图")
-        api_key = str(decision.get("api_key") or "")
-        model = str(decision.get("model") or imagegen.DEFAULT_IMAGE_MODEL)
-        base = str(decision.get("base_url") or imagegen.DEFAULT_IMAGE_BASE_URL)
-        endpoint = imagegen._openai_endpoint(base).rsplit("/", 1)[0] + "/edits"
-        raw = reference_path.read_bytes()
-        body, boundary = _multipart_body(
-            {"model": model, "prompt": prompt, "size": size},
-            [("image", reference_path.name or "reference.png", "image/png", raw)],
+        return imagegen.generate_with_reference(
+            ai_cfg, image_cfg, prompt, reference_path, size, timeout
         )
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "Accept": "application/json",
-            "User-Agent": "qqbot-avatar/1.0",
-        }
-        request = urllib.request.Request(endpoint, data=body, headers=headers, method="POST")
-        try:
-            with urllib.request.urlopen(request, timeout=float(timeout)) as response:
-                payload = json.loads(response.read().decode("utf-8", "replace"))
-        except urllib.error.HTTPError as e:
-            raise RuntimeError(f"参考图接口返回 HTTP {e.code}") from None
-        except Exception:
-            raise RuntimeError("参考图接口网络错误") from None
-        items = payload.get("data") if isinstance(payload, dict) else None
-        images: list[bytes] = []
-        for item in items or []:
-            if not isinstance(item, dict):
-                continue
-            encoded = item.get("b64_json") or item.get("b64")
-            if isinstance(encoded, str) and encoded.strip():
-                try:
-                    images.append(base64.b64decode(encoded.split(",", 1)[-1]))
-                except Exception:
-                    continue
-                continue
-            link = item.get("url")
-            if isinstance(link, str) and link.startswith(("http://", "https://")):
-                try:
-                    with urllib.request.urlopen(link, timeout=float(timeout)) as r:
-                        images.append(r.read())
-                except Exception:
-                    continue
-        if not images:
-            raise RuntimeError("参考图接口没有返回图片")
-        return images[:2]
 
     async def _execute_image_tool(
         self, event, cfg: dict, call: dict, user_text: str = ""

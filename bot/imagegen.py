@@ -52,6 +52,8 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
+from pathlib import Path
 
 __all__ = [
     "ImageGenError",
@@ -65,6 +67,10 @@ __all__ = [
     "ACCOUNT_IMAGE_MODEL",
     "ERROR_IMAGE_CONFIG",
     "ERROR_IMAGE_ACCOUNT",
+    "looks_like_avatar_request",
+    "avatar_prompt",
+    "avatar_reference_path",
+    "generate_with_reference",
 ]
 
 USER_AGENT = "qqbot-imagegen/1.0"
@@ -746,3 +752,153 @@ def generate_for_ai(
             timeout=seconds,
         )
     raise ImageGenError(str(decision.get("error") or ERROR_IMAGE_CONFIG))
+
+
+# ---------------------------------------------------------------------------
+# 机器人形象：请求识别 + 参考图 /images/edits（image_gen 插件与 ai_chat 共用）
+# ---------------------------------------------------------------------------
+AVATAR_REQUEST_RE = re.compile(
+    r"(机器人(的)?(形象|头像|立绘|照片)|你的(形象|头像|立绘|照片)|"
+    r"画(张|个|一个|一张|一幅)?你(自己)?(的)?(形象|头像|立绘|照片)?|"
+    r"你(自己)?的?(照片|形象|头像|立绘)|自画像|头像|立绘|"
+    r"(bot|机器人)\s*(形象|头像|立绘)|avatar)",
+    re.I,
+)
+
+
+def looks_like_avatar_request(text) -> bool:
+    """是不是在要「机器人自己的形象/头像/立绘/照片」这类请求。"""
+    raw = str(text or "").strip()
+    return bool(raw) and bool(AVATAR_REQUEST_RE.search(raw))
+
+
+def avatar_prompt(ai_cfg: dict | None) -> str:
+    """plugins.ai_chat.avatar.prompt（外观约束）。"""
+    cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
+    avatar = cfg.get("avatar") if isinstance(cfg.get("avatar"), dict) else {}
+    return str(avatar.get("prompt") or "").strip()
+
+
+def avatar_reference_path(ai_cfg: dict | None, base_dir=None) -> Path | None:
+    """avatar.reference_image 指向的本地参考图；不存在返回 None。"""
+    cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
+    avatar = cfg.get("avatar") if isinstance(cfg.get("avatar"), dict) else {}
+    reference = str(avatar.get("reference_image") or "").strip()
+    if not reference:
+        return None
+    path = Path(reference)
+    if not path.is_absolute():
+        base = Path(base_dir) if base_dir is not None else Path(__file__).resolve().parent.parent
+        path = base / reference
+    try:
+        return path if path.is_file() else None
+    except OSError:
+        return None
+
+
+def _multipart_body(fields: dict, files: list) -> tuple[bytes, str]:
+    boundary = "----qqbot" + uuid.uuid4().hex
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.append(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"\r\n\r\n'
+                f"{value}\r\n"
+            ).encode("utf-8")
+        )
+    for name, filename, content_type, content in files:
+        chunks.append(
+            (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                f"Content-Type: {content_type}\r\n\r\n"
+            ).encode("utf-8")
+        )
+        chunks.append(bytes(content))
+        chunks.append(b"\r\n")
+    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(chunks), boundary
+
+
+def generate_with_reference(
+    ai_cfg: dict,
+    image_cfg: dict,
+    prompt: str,
+    reference_path,
+    size: str = "1024x1024",
+    timeout: float = 120.0,
+) -> list[bytes]:
+    """OpenAI 兼容 /images/edits multipart：把参考图作为外观参考生成。
+
+    仅在 API Key 模式 + openai provider 下可用；其它模式抛 ImageGenError，
+    调用方负责回退纯文生图。
+    """
+    decision = resolve_image_mode(ai_cfg, image_cfg)
+    if decision.get("mode") != "api":
+        raise ImageGenError("当前画图方式（账号额度）不支持参考图")
+    provider = _normalize_provider(decision.get("provider") or "openai")
+    if provider != "openai":
+        raise ImageGenError("当前画图 provider 不支持参考图")
+    api_key = str(decision.get("api_key") or "")
+    model = str(decision.get("model") or DEFAULT_IMAGE_MODEL)
+    base = str(decision.get("base_url") or DEFAULT_IMAGE_BASE_URL)
+    endpoint = _openai_endpoint(base).rsplit("/", 1)[0] + "/edits"
+    prompt_text = str(prompt or "").strip()
+    if not prompt_text:
+        raise ImageGenError("prompt 为空")
+    path = Path(reference_path)
+    try:
+        raw = path.read_bytes()
+    except Exception as e:
+        raise ImageGenError(f"读取参考图失败: {_safe_error(e, api_key)}") from None
+    body, boundary = _multipart_body(
+        {"model": model, "prompt": prompt_text, "size": str(size or "1024x1024")},
+        [("image", path.name or "reference.png", "image/png", raw)],
+    )
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Accept": "application/json",
+        "User-Agent": USER_AGENT,
+    }
+    request = urllib.request.Request(endpoint, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=float(timeout)) as response:
+            status = int(getattr(response, "status", 200))
+            payload = response.read()
+    except urllib.error.HTTPError as exc:
+        try:
+            raw = exc.read()
+        except Exception:
+            raw = b""
+        raise ImageGenError(_http_error_text("参考图接口", int(exc.code), raw, api_key)) from None
+    except Exception as exc:
+        raise ImageGenError(f"请求参考图接口失败: {_safe_error(exc, api_key)}") from None
+    if not 200 <= status < 300:
+        raise ImageGenError(f"参考图接口返回 HTTP {status}")
+    try:
+        obj = json.loads(payload.decode("utf-8", "replace"))
+    except Exception:
+        raise ImageGenError("参考图接口返回的内容看不懂") from None
+    items = obj.get("data") if isinstance(obj, dict) else None
+    images: list[bytes] = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        encoded = item.get("b64_json") or item.get("b64Json") or item.get("b64")
+        if isinstance(encoded, str) and encoded.strip():
+            try:
+                images.append(_decode_b64_image(encoded))
+            except Exception:
+                continue
+            continue
+        link = item.get("url")
+        if isinstance(link, str) and link.strip():
+            try:
+                images.append(_download_image(link.strip(), float(timeout), api_key))
+            except Exception:
+                continue
+    if not images:
+        raise ImageGenError("参考图接口没有返回图片")
+    return images[:2]

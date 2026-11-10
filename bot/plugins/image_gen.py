@@ -307,26 +307,59 @@ class Plugin(PluginBase):
             await self.ctx.reply(event, str(mode[1]))
             return True
 
-        self.ctx.log.info("文生图请求 %s mode=%s: %s", user_id, mode[0], prompt[:60])
-        try:
-            if mode[0] == "account":
-                account_model = imagegen.account_image_model(cfg)
+        # 机器人形象请求：快捷触发词路径也要前置形象提示词 + 优先用参考图
+        avatar_request = imagegen.looks_like_avatar_request(prompt)
+        avatar_prompt = imagegen.avatar_prompt(ai_cfg)
+        if avatar_request and avatar_prompt and avatar_prompt not in prompt:
+            prompt = f"{avatar_prompt}，{prompt}"
+            self.ctx.log.info("形象请求：已前置 avatar.prompt")
+        reference_path = (
+            imagegen.avatar_reference_path(ai_cfg) if avatar_request else None
+        )
+        images = None
+        if reference_path is not None:
+            size = str(cfg.get("size") or "1024x1024").strip() or "1024x1024"
+            try:
+                timeout = float(cfg.get("timeout_seconds") or 120)
+            except (TypeError, ValueError):
+                timeout = 120.0
+            try:
                 images = await asyncio.to_thread(
-                    self._generate_account_sync, mode[1], account_model, cfg, prompt
+                    imagegen.generate_with_reference,
+                    ai_cfg,
+                    cfg,
+                    prompt,
+                    reference_path,
+                    size,
+                    timeout,
                 )
-            else:
-                _kind, api_key, base_url, provider, model = mode
-                images = await asyncio.to_thread(
-                    self._generate_sync, cfg, prompt, api_key, base_url, provider, model
-                )
-        except imagegen.ImageGenError as e:
-            self.ctx.log.warning("文生图失败: %s", e)
-            await self.ctx.reply(event, f"画图失败：{e}")
-            return True
-        except Exception as e:
-            self.ctx.log.exception("文生图异常")
-            await self.ctx.reply(event, "画图出了点问题，稍后再试。")
-            return True
+                if images:
+                    self.ctx.log.info("形象请求：使用参考图生成")
+            except Exception as e:
+                self.ctx.log.warning("参考图生成失败，回退纯文生图: %s", e)
+                images = None
+
+        if not images:
+            self.ctx.log.info("文生图请求 %s mode=%s: %s", user_id, mode[0], prompt[:60])
+            try:
+                if mode[0] == "account":
+                    account_model = imagegen.account_image_model(cfg)
+                    images = await asyncio.to_thread(
+                        self._generate_account_sync, mode[1], account_model, cfg, prompt
+                    )
+                else:
+                    _kind, api_key, base_url, provider, model = mode
+                    images = await asyncio.to_thread(
+                        self._generate_sync, cfg, prompt, api_key, base_url, provider, model
+                    )
+            except imagegen.ImageGenError as e:
+                self.ctx.log.warning("文生图失败: %s", e)
+                await self.ctx.reply(event, f"画图失败：{e}")
+                return True
+            except Exception as e:
+                self.ctx.log.exception("文生图异常")
+                await self.ctx.reply(event, "画图出了点问题，稍后再试。")
+                return True
 
         if not images:
             await self.ctx.reply(event, "画图失败：接口没有返回图片。")
