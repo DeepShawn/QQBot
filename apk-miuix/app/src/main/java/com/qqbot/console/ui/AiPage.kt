@@ -6,12 +6,20 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -21,10 +29,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -75,6 +86,27 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
 
     val ctx = LocalContext.current
     val avatar = ai.optJSONObject("avatar") ?: JSONObject()
+    val presets = ai.optJSONArray("presets")?.objects().orEmpty()
+    val activePresetId = ai.optStr("active_preset").ifBlank { "custom" }
+    val activePreset = if (activePresetId == "custom") null else presets.firstOrNull { it.optStr("id") == activePresetId }
+    var presetDetail by remember { mutableStateOf<JSONObject?>(null) }
+
+    fun switchPreset(id: String, name: String) {
+        scope.launch {
+            Store.patch(patchOf("plugins", "ai_chat", "active_preset", value = id), "已切换人格：$name")
+        }
+    }
+
+    /** 把预设内容复制到顶层字段并切到「自定义」，之后可以自由编辑。 */
+    fun copyPresetToCustom(preset: JSONObject) {
+        val values = JSONObject()
+            .put("active_preset", "custom")
+            .put("system_prompt", preset.optStr("system_prompt"))
+            .put("avatar", JSONObject().put("prompt", preset.optStr("avatar_prompt")))
+        scope.launch {
+            Store.patch(patchOf("plugins", "ai_chat", value = values), "已复制为自定义人格，可继续编辑")
+        }
+    }
     var refBytes by remember { mutableStateOf<ByteArray?>(null) }
     var refError by remember { mutableStateOf("") }
     var refBusy by remember { mutableStateOf(false) }
@@ -231,26 +263,104 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
             EditPreference("机器人名字", Store.str("config", "bot", "name")) {
                 if (it.isNotBlank()) Store.patch(patchOf("bot", "name", value = it))
             }
-            EditPreference("人格提示词", ai.optStr("system_prompt"), multiline = true) {
-                Store.patch(patchOf("plugins", "ai_chat", "system_prompt", value = it))
+            val preset = activePreset
+            if (preset == null) {
+                EditPreference("人格提示词", ai.optStr("system_prompt"), multiline = true) {
+                    Store.patch(patchOf("plugins", "ai_chat", "system_prompt", value = it))
+                }
+                if (activePresetId != "custom") {
+                    Hint("当前预设「$activePresetId」不可用，先按自定义人格显示。")
+                }
+            } else {
+                ArrowPreference(
+                    title = "人格提示词（跟随预设：${preset.optStr("name")}）",
+                    summary = preset.optStr("system_prompt").replace("\n", " ").take(40)
+                        .ifBlank { "（这个预设没有单独的人格提示词）" },
+                    onClick = { presetDetail = preset },
+                )
+                TextButton(
+                    text = "编辑为自定义",
+                    onClick = { copyPresetToCustom(preset) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                Hint("当前人格由预设「${preset.optStr("name")}」提供；要自由修改，点「编辑为自定义」把内容复制过来。")
             }
         }
 
-        group("机器人形象") {
-            EditPreference(
-                "形象提示词",
-                avatar.optStr("prompt"),
-                summary = "生成机器人头像 / 立绘时作为外观约束（最多 2000 字）",
-                multiline = true,
-            ) { text ->
-                val trimmed = text.trim()
-                Store.patch(
-                    patchOf("plugins", "ai_chat", "avatar", "prompt", value = trimmed.take(2000)),
-                    "形象提示词已保存",
-                )
-                if (trimmed.length > 2000) Store.toast = "最多 2000 字，已截断保存"
+        group("人格预设") {
+            if (presets.isEmpty()) {
+                Hint("预设暂时不可用（等后端接入）；先使用下面的「自定义」人格。")
             }
-            Hint("例：蓝白配色、鲸鱼娘、圆脸、戴耳机。生成机器人形象 / 头像时会作为外观约束。")
+            LazyRow(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                item(key = "custom") {
+                    PresetCard(
+                        emoji = "✨",
+                        name = "自定义",
+                        desc = ai.optStr("system_prompt").replace("\n", " ").take(30)
+                            .ifBlank { "使用你自己写的提示词" },
+                        selected = activePresetId == "custom",
+                        onClick = { switchPreset("custom", "自定义") },
+                        onLongPress = {
+                            presetDetail = JSONObject()
+                                .put("name", "自定义")
+                                .put("emoji", "✨")
+                                .put("system_prompt", ai.optStr("system_prompt"))
+                                .put("avatar_prompt", avatar.optStr("prompt"))
+                        },
+                    )
+                }
+                items(presets.size) { index ->
+                    val p = presets[index]
+                    val id = p.optStr("id")
+                    val pName = p.optStr("name").ifBlank { id }
+                    PresetCard(
+                        emoji = p.optStr("emoji"),
+                        name = pName,
+                        desc = p.optStr("system_prompt").replace("\n", " ").take(30),
+                        selected = id == activePresetId,
+                        onClick = { switchPreset(id, pName) },
+                        onLongPress = { presetDetail = p },
+                    )
+                }
+            }
+            Hint("点击卡片立即切换人格；长按查看该预设的完整人格 / 形象提示词。")
+        }
+
+        group("机器人形象") {
+            val preset = activePreset
+            if (preset == null) {
+                EditPreference(
+                    "形象提示词",
+                    avatar.optStr("prompt"),
+                    summary = "生成机器人头像 / 立绘时作为外观约束（最多 2000 字）",
+                    multiline = true,
+                ) { text ->
+                    val trimmed = text.trim()
+                    Store.patch(
+                        patchOf("plugins", "ai_chat", "avatar", "prompt", value = trimmed.take(2000)),
+                        "形象提示词已保存",
+                    )
+                    if (trimmed.length > 2000) Store.toast = "最多 2000 字，已截断保存"
+                }
+                Hint("例：蓝白配色、鲸鱼娘、圆脸、戴耳机。生成机器人形象 / 头像时会作为外观约束。")
+            } else {
+                ArrowPreference(
+                    title = "形象提示词（跟随预设：${preset.optStr("name")}）",
+                    summary = preset.optStr("avatar_prompt").replace("\n", " ").take(40)
+                        .ifBlank { "（这个预设没有单独的形象提示词）" },
+                    onClick = { presetDetail = preset },
+                )
+                TextButton(
+                    text = "编辑为自定义",
+                    onClick = { copyPresetToCustom(preset) },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                )
+                Hint("形象提示词跟随预设；点「编辑为自定义」可复制到自定义后修改。参考图仍按下面单独设置。")
+            }
 
             val thumb = remember(refBytes) { refBytes?.let { decodeThumbnail(it) } }
             if (thumb != null) {
@@ -402,6 +512,10 @@ fun AiPage(padding: PaddingValues, scrollBehavior: ScrollBehavior) {
         }
     }
 
+    presetDetail?.let { preset ->
+        PresetDetailDialog(preset) { presetDetail = null }
+    }
+
     accountDialog?.let { id ->
         AccountDialog(
             providerId = id,
@@ -442,4 +556,81 @@ private fun decodeThumbnail(bytes: ByteArray, maxSide: Int = 720): ImageBitmap? 
     BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)?.asImageBitmap()
 } catch (_: Throwable) {
     null
+}
+
+/** 人格预设卡片：emoji + 名称 + 简介；选中高亮。点按切换、长按看详情。 */
+@Composable
+private fun PresetCard(
+    emoji: String,
+    name: String,
+    desc: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+) {
+    val accent = LocalAccent.current
+    val shape = RoundedCornerShape(20.dp)
+    Column(
+        Modifier
+            .width(150.dp)
+            .glass(
+                level = if (selected) GlassLevel.Regular else GlassLevel.Thin,
+                shape = shape,
+                tint = if (selected) accent.primary else Color.Unspecified,
+            )
+            .then(
+                if (selected) Modifier.border(1.dp, accent.primary.copy(alpha = 0.75f), shape) else Modifier,
+            )
+            .pointerInput(name, selected) {
+                detectTapGestures(onTap = { onClick() }, onLongPress = { onLongPress() })
+            }
+            .padding(14.dp),
+    ) {
+        Text(emoji.ifBlank { "🤖" }, fontSize = 24.sp)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            name,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = if (selected) accent.primary else GlassText.primary,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(desc, fontSize = 12.sp, color = GlassText.secondary, maxLines = 3)
+    }
+}
+
+/** 预设详情（只读）：完整人格提示词 + 形象提示词。 */
+@Composable
+private fun PresetDetailDialog(preset: JSONObject, onClose: () -> Unit) {
+    val name = preset.optStr("name").ifBlank { "预设" }
+    val emoji = preset.optStr("emoji")
+    val system = preset.optStr("system_prompt")
+    val avatarPrompt = preset.optStr("avatar_prompt")
+    GlassDialog(
+        show = true,
+        title = (emoji.ifBlank { "🤖" }) + " " + name,
+        onDismissRequest = onClose,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().heightIn(max = 480.dp).verticalScroll(rememberScrollState()),
+        ) {
+            Text("人格提示词", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = GlassText.primary)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                system.ifBlank { "（没有单独的人格提示词，使用自定义内容）" },
+                fontSize = 13.sp,
+                color = GlassText.secondary,
+            )
+            Spacer(Modifier.height(14.dp))
+            Text("形象提示词", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = GlassText.primary)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                avatarPrompt.ifBlank { "（没有单独的形象提示词）" },
+                fontSize = 13.sp,
+                color = GlassText.secondary,
+            )
+            Spacer(Modifier.height(16.dp))
+            GlassButton(text = "关闭", onClick = onClose, modifier = Modifier.fillMaxWidth())
+        }
+    }
 }

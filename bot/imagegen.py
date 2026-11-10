@@ -68,6 +68,7 @@ __all__ = [
     "ERROR_IMAGE_CONFIG",
     "ERROR_IMAGE_ACCOUNT",
     "looks_like_avatar_request",
+    "active_preset",
     "avatar_prompt",
     "avatar_reference_path",
     "generate_with_reference",
@@ -772,9 +773,36 @@ def looks_like_avatar_request(text) -> bool:
     return bool(raw) and bool(AVATAR_REQUEST_RE.search(raw))
 
 
-def avatar_prompt(ai_cfg: dict | None) -> str:
-    """plugins.ai_chat.avatar.prompt（外观约束）。"""
+def active_preset(ai_cfg: dict | None) -> dict | None:
+    """active_preset 命中的预设 dict；custom/未知返回 None。"""
     cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
+    active = str(cfg.get("active_preset") or "custom").strip().lower()
+    if not active or active == "custom":
+        return None
+    presets = cfg.get("presets")
+    if isinstance(presets, dict):
+        presets = [
+            dict(value, id=key) if isinstance(value, dict) else value
+            for key, value in presets.items()
+        ]
+    if not isinstance(presets, list):
+        return None
+    for item in presets:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("id") or "").strip().lower() == active:
+            return item
+    return None
+
+
+def avatar_prompt(ai_cfg: dict | None) -> str:
+    """形象提示词：active_preset 命中时优先用预设 avatar_prompt，否则顶层 avatar.prompt。"""
+    cfg = ai_cfg if isinstance(ai_cfg, dict) else {}
+    preset = active_preset(cfg)
+    if preset is not None:
+        value = str(preset.get("avatar_prompt") or "").strip()
+        if value:
+            return value
     avatar = cfg.get("avatar") if isinstance(cfg.get("avatar"), dict) else {}
     return str(avatar.get("prompt") or "").strip()
 

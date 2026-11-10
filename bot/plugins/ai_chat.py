@@ -300,8 +300,13 @@ class Plugin(PluginBase):
             if cfg.get("auth"):
                 cfg["model"] = str(prof.get("model") or "").strip()
         cfg["auth"] = str(cfg.get("auth") or "").strip()
-        # 人格提示词只认顶层：profile 只覆盖接口字段，不能让 system_prompt 变空
+        # 人格提示词只认顶层；active_preset 命中预设时优先用预设人格
         cfg["system_prompt"] = str(top_cfg.get("system_prompt") or "").strip()
+        preset = imagegen.active_preset(top_cfg)
+        if preset is not None:
+            preset_prompt = str(preset.get("system_prompt") or "").strip()
+            if preset_prompt:
+                cfg["system_prompt"] = preset_prompt
         return cfg
 
     # ---------------- 触发判断 ----------------
@@ -913,7 +918,7 @@ class Plugin(PluginBase):
 
         # 机器人形象：只有形象/头像/立绘类请求才拼形象提示词、用参考图
         avatar = self._avatar_cfg(cfg)
-        avatar_prompt = str(avatar.get("prompt") or "").strip()
+        avatar_prompt = imagegen.avatar_prompt(cfg)
         avatar_request = self._looks_like_avatar_request(
             user_text
         ) or self._looks_like_avatar_request(prompt)

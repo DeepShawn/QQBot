@@ -333,6 +333,45 @@ def sanitize_config(cfg: dict) -> dict:
         _clamp_int(prof, "max_tokens", 64, 8192, 4096)
         if not str(prof.get("id") or "").strip():
             prof["id"] = "profile"
+    presets_raw = ai.get("presets")
+
+    def _default_presets() -> list:
+        try:
+            import config as _config
+
+            items = _config.DEFAULTS["plugins"]["ai_chat"]["presets"]
+            return [dict(item) for item in items if isinstance(item, dict)]
+        except Exception:
+            return []
+
+    if not isinstance(presets_raw, list):
+        presets_raw = _default_presets()
+    cleaned_presets = []
+    seen_ids = set()
+    for item in presets_raw:
+        if not isinstance(item, dict):
+            continue
+        preset_id = str(item.get("id") or "").strip().lower()
+        if not re.fullmatch(r"[a-z0-9_-]{1,32}", preset_id):
+            continue
+        if preset_id in seen_ids:
+            continue
+        seen_ids.add(preset_id)
+        cleaned_presets.append(
+            {
+                "id": preset_id,
+                "name": str(item.get("name") or "").strip()[:40] or preset_id,
+                "emoji": str(item.get("emoji") or "").strip()[:8],
+                "system_prompt": str(item.get("system_prompt") or "")[:4000],
+                "avatar_prompt": str(item.get("avatar_prompt") or "")[:2000],
+            }
+        )
+    ai["presets"] = cleaned_presets
+    active = str(ai.get("active_preset") or "custom").strip().lower() or "custom"
+    if active != "custom" and active not in seen_ids:
+        active = "custom"
+    ai["active_preset"] = active
+
     avatar = ai.get("avatar")
     if not isinstance(avatar, dict):
         avatar = {}
@@ -612,6 +651,45 @@ def _set_avatar_reference(value: str) -> None:
     cfg = load_config()
     plugins = cfg.setdefault("plugins", {})
     ai = plugins.setdefault("ai_chat", {})
+    presets_raw = ai.get("presets")
+
+    def _default_presets() -> list:
+        try:
+            import config as _config
+
+            items = _config.DEFAULTS["plugins"]["ai_chat"]["presets"]
+            return [dict(item) for item in items if isinstance(item, dict)]
+        except Exception:
+            return []
+
+    if not isinstance(presets_raw, list):
+        presets_raw = _default_presets()
+    cleaned_presets = []
+    seen_ids = set()
+    for item in presets_raw:
+        if not isinstance(item, dict):
+            continue
+        preset_id = str(item.get("id") or "").strip().lower()
+        if not re.fullmatch(r"[a-z0-9_-]{1,32}", preset_id):
+            continue
+        if preset_id in seen_ids:
+            continue
+        seen_ids.add(preset_id)
+        cleaned_presets.append(
+            {
+                "id": preset_id,
+                "name": str(item.get("name") or "").strip()[:40] or preset_id,
+                "emoji": str(item.get("emoji") or "").strip()[:8],
+                "system_prompt": str(item.get("system_prompt") or "")[:4000],
+                "avatar_prompt": str(item.get("avatar_prompt") or "")[:2000],
+            }
+        )
+    ai["presets"] = cleaned_presets
+    active = str(ai.get("active_preset") or "custom").strip().lower() or "custom"
+    if active != "custom" and active not in seen_ids:
+        active = "custom"
+    ai["active_preset"] = active
+
     avatar = ai.get("avatar")
     if not isinstance(avatar, dict):
         avatar = {}
